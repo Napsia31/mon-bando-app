@@ -2050,7 +2050,7 @@ function rcClasse(st){ return st==="Attendu"?"attendu":st==="Validé"?"valide":"
 
 function rcRendreFiltres(){
   const cnt=(st)=>RC_DONS.filter(d=>d.statut===st).length;
-  const f=[["Attendu","Attendus "+cnt("Attendu")],["Validé","Validés "+cnt("Validé")],["Non conforme","Non conf. "+cnt("Non conforme")]];
+  const f=[["Attendu","Attendus "+cnt("Attendu")],["Validé","Validés "+cnt("Validé")],["Non conforme","Refusés "+cnt("Non conforme")]];
   document.getElementById('rc-filtres').innerHTML=f.map(([v,l])=>
     `<button class="rc-chip ${rcFiltre===v?'on':''}" onclick="rcSetFiltre('${v}')">${l}</button>`).join('');
   const aides={
@@ -3939,12 +3939,23 @@ const DON_STATUTS = { aTrier:"À trier", valide:"Validé", reserve:"Réservé", 
 async function chargerDonsAirtable(){
   if(!atActif()) return null;
   const data = await airtable("listRecords", { tableId: AT_CONFIG.tables.dons });
+  // conversion statut Airtable → libellé interne de l'app (onglets Attendus / Validés / Non conforme)
+  const mapStatut = {
+    "En attente de don": "Attendu",
+    "À trier":           "Attendu",   // (au cas où) un colis reçu non traité reste dans Attendus
+    "Validé":            "Validé",
+    "Réservé":           "Validé",    // cheveux cliente réservés : traités comme acceptés
+    "Refusé":            "Non conforme",
+    "Utilisé":           "Validé"
+  };
   return (data.records||[]).map(r=>{
     const f = r.fields||{};
+    const statutAT = (f["Statut"] && f["Statut"].name) ? f["Statut"].name : f["Statut"];
     return {
       _recId:   r.id,
       code:     f["Code"],
-      statut:   f["Statut"],
+      statut:   mapStatut[statutAT] || "Attendu",
+      statutAirtable: statutAT,
       prenom:   f["Prénom"]||"",
       nom:      f["Nom"]||"",
       ville:    f["Ville"]||"",
