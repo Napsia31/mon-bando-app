@@ -3,7 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Atelier Mon Bandô — Fabrication (maquette)</title>
+<title>Atelier Mon Bandô</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#254961">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Mon Bandô">
+<link rel="apple-touch-icon" href="/icone-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/icone-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js"></script>
@@ -2063,7 +2070,7 @@ function rcRendreFiltres(){
 function rcSetFiltre(v){ rcFiltre=v; rcRendreFiltres(); rcRendreListe(); }
 
 function rcRendreListe(){
-  const liste=RC_DONS.filter(d=>d.statut===rcFiltre).sort((a,b)=> new Date(a.envoiLe||0)-new Date(b.envoiLe||0));
+  const liste=RC_DONS.filter(d=>d.statut===rcFiltre).sort((a,b)=> new Date(a.envoiLe||a._cree||0)-new Date(b.envoiLe||b._cree||0));
   const z=document.getElementById('rc-liste');
   if(liste.length===0){ z.innerHTML='<div style="text-align:center;color:#5b7387;padding:30px;font-size:14px">Aucun don ici pour le moment.</div>'; return; }
   z.innerHTML=liste.map(d=>{
@@ -2072,14 +2079,17 @@ function rcRendreListe(){
       ? `<div class="rc-vign" style="display:flex;align-items:center;justify-content:center;font-size:22px;color:#5b7387">📦</div>`
       : `<div class="rc-vign" style="background:${grad}"></div>`;
     const meta = d.statut==="Attendu"
-      ? `Annoncé : ${d.couleurAnn} · ${d.longueurAnn} cm · envoyé le ${rcFmt(d.envoiLe)}`
+      ? `Colis annoncé — en attente d'arrivée`
       : d.statut==="Validé"
-      ? `${d.poids} g · ${d.couleur} · ${d.longueur} cm · 📍 ${d.bac}`
-      : `${d.motifNC}`;
-    return `<div class="rc-carte ${rcClasse(d.statut)}" onclick="rcOuvrir('${d.code}')">
+      ? `${d.poids||'—'} g · ${d.couleur||'—'} · ${d.longueur||'—'} cm${d.bac?' · 📍 '+d.bac:''}`
+      : `${d.motifNC||'Non conforme'}`;
+    const ref = d._recId || d.code || '';
+    const titre = d.code || 'Nouveau don';
+    const nomComplet = ((d.prenom||'')+' '+(d.nom||'')).trim() || 'Donneuse (à préciser)';
+    return `<div class="rc-carte ${rcClasse(d.statut)}" onclick="rcOuvrir('${ref}')">
       ${vign}
-      <div class="rc-txt"><div class="rc-don">${d.code}</div>
-        <div class="rc-nom">${d.prenom} ${d.nom}</div><div class="rc-meta">${meta}</div></div>
+      <div class="rc-txt"><div class="rc-don">${titre}</div>
+        <div class="rc-nom">${nomComplet}</div><div class="rc-meta">${meta}</div></div>
       ${rcBadge(d.statut)}</div>`;
   }).join('');
 }
@@ -2093,26 +2103,35 @@ function rcMedias(d){
 }
 const rcL=(lab,val)=>`<div class="rc-ligne"><span class="lab">${lab}</span><span class="val">${val}</span></div>`;
 function rcDonneuse(d){
+  const nomComplet = ((d.civilite? d.civilite+' ':'') + (d.prenom||'') + ' ' + (d.nom||'')).trim() || '—';
+  const adresseComplete = [d.adresse, [d.cp, d.ville].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '—';
   return `<div class="rc-bloc"><h3>Donneuse</h3>
-    ${rcL("Nom", d.prenom+' '+d.nom)}
-    ${rcL("Ville", d.ville||'—')}
-    ${rcL("Canal", d.canal||'—')}
+    ${rcL("Nom", nomComplet)}
+    ${rcL("Adresse", adresseComplete)}
+    ${rcL("Vous êtes", d.canal||'—')}
     <div class="rc-ligne rc-telmail"><span class="lab">Téléphone</span><span class="val"><a href="tel:${(d.tel||'').replace(/ /g,'')}">${d.tel||'—'}</a></span></div>
     <div class="rc-ligne rc-telmail"><span class="lab">Email</span><span class="val"><a href="mailto:${d.mail||''}">${d.mail||'—'}</a></span></div>
+    ${d.insta?rcL("Instagram", d.insta):''}
+    ${d.tiktok?rcL("TikTok", d.tiktok):''}
+    ${d.facebook?rcL("Facebook", d.facebook):''}
+    ${d.nature?rcL("Nature / traitement", d.nature):''}
+    ${d.notes?rcL("Notes", d.notes):''}
+    ${d.consent?rcL("Consentement", "✓ Donné"):''}
+    ${d.partageOK?rcL("Partage réseaux", "✓ Autorisé"):''}
   </div>`;
 }
-function rcOuvrir(code){
-  const d=RC_DONS.find(x=>x.code===code); if(!d) return;
+function rcOuvrir(ref){
+  const d=RC_DONS.find(x=>(x._recId&&x._recId===ref) || x.code===ref); if(!d) return;
   const grad=`linear-gradient(160deg, ${RC_CHEV[d.couleur||d.couleurAnn]||'#6b4a33'} 0%, #2e1f14 100%)`;
+  const REF=d._recId||d.code; // référence utilisée par les boutons
   let corps='';
   if(d.statut==="Attendu"){
     corps =
       `<div class="rc-bloc"><h3>Colis attendu</h3>
-        ${rcL("Code don", d.code)}
-        ${rcL("Annoncé (formulaire)", d.couleurAnn+' · '+d.longueurAnn+' cm')}
-        ${rcL("Envoyé le", rcFmt(d.envoiLe))}</div>`
+        ${rcL("Code don", d.code||'à attribuer à réception')}
+        ${rcL("Statut", "En attente de don")}
+        ${d.recuLe?rcL("Formulaire reçu le", rcFmt(d.recuLe)):''}</div>`
     + rcDonneuse(d)
-    + `<div class="rc-bloc"><h3>Médias envoyés par la donneuse</h3>${rcMedias(d)}</div>`
     + `<div class="rc-bloc"><h3>À l'arrivée du colis</h3>
         <div class="rc-champ"><label>Photo / vidéo de la mèche reçue</label>
           <button class="rc-btn-photo" onclick="toast('📷 Appareil photo — média de la mèche')">📷 Prendre photo / vidéo</button></div>
@@ -2124,8 +2143,8 @@ function rcOuvrir(code){
           <div class="rc-champ"><label>Texture</label><select><option>Lisse</option><option>Ondulé</option><option>Bouclé</option><option>Crépu</option></select></div></div>
         <div class="rc-champ"><label>Nuance (votre œil)</label><input type="text" placeholder="ex. Châtain doré"></div>
         <div class="rc-ia">🤖 Nuance affinée (IA) : proposée automatiquement à partir des photos.</div></div>`
-    + `<button class="rc-btn rc-btn-valide" onclick="rcValider('${d.code}')">✓ Conforme — ranger en bac</button>`
-    + `<button class="rc-btn rc-btn-nc" onclick="rcRefuser('${d.code}')">Non conforme</button>`;
+    + `<button class="rc-btn rc-btn-valide" onclick="rcValider('${REF}')">✓ Conforme — ranger en bac</button>`
+    + `<button class="rc-btn rc-btn-nc" onclick="rcRefuser('${REF}')">Non conforme</button>`;
   } else if(d.statut==="Validé"){
     corps =
       `<div class="rc-bloc"><h3>Don validé</h3>
@@ -2163,8 +2182,8 @@ function rcOuvrir(code){
   document.getElementById('rc-fiche').scrollTop=0;
 }
 function rcFermer(){ document.getElementById('rc-fiche').classList.remove('on'); document.getElementById('rc-voile').classList.remove('on'); }
-function rcValider(code){
-  const d=RC_DONS.find(x=>x.code===code); if(!d) return;
+function rcValider(ref){
+  const d=RC_DONS.find(x=>(x._recId&&x._recId===ref) || x.code===ref); if(!d) return;
   const etaitAttendu = d.statut==="Attendu";
   d.statut="Validé"; d.recuLe=new Date().toISOString().slice(0,10);
   d.poids=d.poids||34; d.couleur=d.couleur||d.couleurAnn||"Châtain"; d.longueur=d.longueur||d.longueurAnn||35;
@@ -2172,17 +2191,17 @@ function rcValider(code){
   if(etaitAttendu) d.rattache="Colis annoncé reçu le "+rcFmt(d.recuLe);
   if(atActif() && d._recId){ majStatutDonAirtable(d._recId, DON_STATUTS.valide).catch(()=>toast("Statut non enregistré dans Airtable.")); }
   rcFermer(); rcFiltre="Validé"; rcRendreFiltres(); rcRendreListe();
-  rcTicket(code); // ticket à coller sur le sachet avant rangement en bac
+  if(d.code) rcTicket(d.code); // ticket à coller sur le sachet avant rangement en bac
 }
-function rcRefuser(code){
-  const d=RC_DONS.find(x=>x.code===code); if(!d) return;
+function rcRefuser(ref){
+  const d=RC_DONS.find(x=>(x._recId&&x._recId===ref) || x.code===ref); if(!d) return;
   d.statut="Non conforme"; d.recuLe=new Date().toISOString().slice(0,10);
   d.poids=d.poids||12; d.longueur=d.longueur||8;
   d.motifNC=d.motifNC||"Longueur ou état insuffisants";
   if(atActif() && d._recId){ majStatutDonAirtable(d._recId, DON_STATUTS.refuse).catch(()=>toast("Statut non enregistré dans Airtable.")); }
   rcFiltre="Non conforme"; rcRendreFiltres(); rcRendreListe();
-  rcOuvrir(code); // ouvre la fiche : envoi Capillum + message donneuse disponibles
-  toast(`Don ${code} non conforme. Envoi Capillum et message donneuse ci-dessous.`);
+  rcOuvrir(d._recId||d.code); // ouvre la fiche : envoi Capillum + message donneuse disponibles
+  toast(`Don refusé. Envoi Capillum et message donneuse ci-dessous.`);
 }
 function rcAgrandir(){ agrandirPhoto(1,1); }
 
@@ -2212,34 +2231,55 @@ function rcColisRecu(){
   document.getElementById('rc-voile').classList.add('on');
   document.getElementById('rc-fiche').scrollTop=0;
 }
+/* ---- Prochain code D- : cherche le plus grand D-XXXX existant et ajoute 1 ---- */
+function rcProchainCode(){
+  let max=0;
+  RC_DONS.forEach(d=>{
+    const m=(d.code||'').match(/^D-(\d+)$/);
+    if(m){ const n=parseInt(m[1],10); if(n>max) max=n; }
+  });
+  return "D-"+String(max+1).padStart(4,'0');
+}
 /* ---- Don non annoncé : fiche de saisie qui crée un nouveau don puis le valide ---- */
 function rcNouveauDon(){
-  const num=String(72+RC_DONS.length).padStart(3,'0');
-  const code="D-2026-"+num;
-  const corps=`<div class="rc-bloc"><h3>Colis non annoncé — ${code}</h3>
-      <div style="font-size:12.5px;color:#5b7387;line-height:1.5;margin-bottom:6px">Renseignez la donneuse si vous la connaissez (ex. mot glissé dans le colis), sinon laissez vide.</div>
+  const code=rcProchainCode();
+  const corps=`<div class="rc-bloc"><h3>Donneuse — ${code}</h3>
+      <div style="font-size:12.5px;color:#5b7387;line-height:1.5;margin-bottom:6px">Renseignez ce que vous savez (formulaire papier joint au colis, mot, réseaux). Laissez vide si inconnu.</div>
+      <div class="rc-champ"><label>Civilité</label><select id="nd-civilite"><option value="">—</option><option>Madame</option><option>Monsieur</option></select></div>
       <div class="rc-duo">
         <div class="rc-champ"><label>Prénom</label><input id="nd-prenom" type="text" placeholder="Prénom"></div>
         <div class="rc-champ"><label>Nom</label><input id="nd-nom" type="text" placeholder="Nom"></div></div>
-      <div class="rc-champ"><label>Ville</label><input id="nd-ville" type="text" placeholder="Ville"></div>
       <div class="rc-duo">
-        <div class="rc-champ"><label>Téléphone</label><input id="nd-tel" type="tel" placeholder="Tél."></div>
-        <div class="rc-champ"><label>Email</label><input id="nd-mail" type="email" placeholder="Email"></div></div></div>
-    <div class="rc-bloc"><h3>À l'arrivée du colis</h3>
+        <div class="rc-champ"><label>Téléphone</label><input id="nd-tel" type="tel" placeholder="+33 6 12 34 56 78"></div>
+        <div class="rc-champ"><label>Email</label><input id="nd-mail" type="email" placeholder="Email"></div></div>
+      <div class="rc-champ"><label>Adresse postale</label><input id="nd-adresse" type="text" placeholder="N° et rue"></div>
+      <div class="rc-duo">
+        <div class="rc-champ"><label>Code postal</label><input id="nd-cp" type="text" placeholder="31200"></div>
+        <div class="rc-champ"><label>Ville</label><input id="nd-ville" type="text" placeholder="Ville"></div></div>
+      <div class="rc-duo">
+        <div class="rc-champ"><label>Instagram</label><input id="nd-insta" type="text" placeholder="@pseudo"></div>
+        <div class="rc-champ"><label>TikTok</label><input id="nd-tiktok" type="text" placeholder="@pseudo"></div></div>
+      <div class="rc-champ"><label>Vous êtes</label><select id="nd-source"><option>Un particulier</option><option>Un salon de coiffure / coiffeur·se</option><option>Une entreprise / association</option><option>Un·e professionnel·le de santé</option><option>Un distributeur spécialisé</option></select></div>
+      </div>
+    <div class="rc-bloc"><h3>La mèche reçue</h3>
       <div class="rc-champ"><label>Photo / vidéo de la mèche reçue</label>
-        <button class="rc-btn-photo" onclick="toast('📷 Appareil photo — média de la mèche')">📷 Prendre photo / vidéo</button></div>
+        <button class="rc-btn-photo" onclick="toast('📷 Prise de photo — fonctionnalité à venir')">📷 Prendre photo / vidéo</button></div>
       <div class="rc-duo">
         <div class="rc-champ"><label>Poids (g)</label><input id="nd-poids" type="number" inputmode="numeric" placeholder="ex. 34"></div>
         <div class="rc-champ"><label>Longueur (cm)</label><input id="nd-long" type="number" inputmode="numeric" placeholder="ex. 35"></div></div>
       <div class="rc-duo">
-        <div class="rc-champ"><label>Couleur</label><select id="nd-couleur"><option>Châtain</option><option>Châtain clair</option><option>Blond</option><option>Noir</option><option>Roux</option></select></div>
+        <div class="rc-champ"><label>Couleur</label><select id="nd-couleur"><option>Blond très clair</option><option>Blond</option><option>Blond foncé</option><option>Châtain clair</option><option selected>Châtain</option><option>Châtain foncé</option><option>Brun</option><option>Noir</option><option>Roux</option><option>Gris / Blanc</option><option>Poivre et sel</option></select></div>
         <div class="rc-champ"><label>Texture</label><select id="nd-texture"><option>Lisse</option><option>Ondulé</option><option>Bouclé</option><option>Crépu</option></select></div></div>
-      <div class="rc-champ"><label>Nuance (votre œil)</label><input id="nd-nuance" type="text" placeholder="ex. Châtain doré"></div>
-      <div class="rc-ia">🤖 Nuance affinée (IA) : proposée automatiquement à partir des photos.</div></div>
+      <div class="rc-champ"><label>Nature / traitement</label><select id="nd-nature"><option>Naturel brut</option><option>Coloré</option><option>Méché</option><option>Décoloré</option><option>Grisonnant</option><option>Naturels (non colorés / décolorés)</option></select></div>
+      <div class="rc-champ"><label>Localisation (bac)</label><input id="nd-bac" type="text" placeholder="ex. B3"></div>
+      <div class="rc-champ"><label>Notes</label><input id="nd-notes" type="text" placeholder="Remarque libre"></div>
+      <div class="rc-champ"><label><input id="nd-consent" type="checkbox" style="width:auto;margin-right:8px">Consentement donné</label></div>
+      <div class="rc-champ"><label><input id="nd-partage" type="checkbox" style="width:auto;margin-right:8px">Partage réseaux autorisé</label></div>
+      <div class="rc-ia">🤖 Nuance affinée (IA) : à venir, proposée à partir des photos.</div></div>
     <button class="rc-btn rc-btn-valide" onclick="rcCreerDon('${code}')">✓ Conforme — ranger en bac</button>
     <button class="rc-btn rc-btn-nc" onclick="rcCreerDonNC('${code}')">Non conforme</button>`;
   document.getElementById('rc-fiche').innerHTML=
-    `<div class="rc-tete"><div><div class="t">Don reçu</div><div class="f">${code} · non annoncé</div></div>
+    `<div class="rc-tete"><div><div class="t">Don reçu</div><div class="f">${code} · sans formulaire</div></div>
       <button class="rc-fermer" onclick="rcFermer()">×</button></div>${corps}`;
   document.getElementById('rc-fiche').classList.add('on');
   document.getElementById('rc-voile').classList.add('on');
@@ -2247,11 +2287,19 @@ function rcNouveauDon(){
 }
 function rcLireNouveau(code, statut){
   const g=v=>document.getElementById(v)?document.getElementById(v).value:'';
-  return {code, statut, prenom:g('nd-prenom')||"Donneuse", nom:g('nd-nom')||"(non annoncée)",
-    ville:g('nd-ville'), tel:g('nd-tel'), mail:g('nd-mail'), canal:"Particulier",
-    envoiLe:"2026-07-12", recuLe:"2026-07-12", photos:1, videos:0,
-    poids:+g('nd-poids')||34, longueur:+g('nd-long')||35, couleur:g('nd-couleur')||"Châtain",
-    texture:g('nd-texture')||"Lisse", nuanceAnn:g('nd-nuance'), nuanceIA:"Châtain chaud 5.3", bac:"B3"};
+  const c=v=>document.getElementById(v)?document.getElementById(v).checked:false;
+  const auj=new Date().toISOString().slice(0,10);
+  return {code, statut,
+    civilite:g('nd-civilite'), prenom:g('nd-prenom'), nom:g('nd-nom'),
+    tel:g('nd-tel'), mail:g('nd-mail'),
+    adresse:g('nd-adresse'), cp:g('nd-cp'), ville:g('nd-ville'),
+    insta:g('nd-insta'), tiktok:g('nd-tiktok'),
+    canal:g('nd-source')||"Particulier",
+    recuLe:auj, photos:0, videos:0,
+    poids:+g('nd-poids')||0, longueur:+g('nd-long')||0,
+    couleur:g('nd-couleur')||"", texture:g('nd-texture')||"",
+    nature:g('nd-nature')||"", bac:g('nd-bac')||"", notes:g('nd-notes')||"",
+    consent:c('nd-consent'), partageOK:c('nd-partage')};
 }
 function rcCreerDon(code){
   const d=rcLireNouveau(code,"Validé"); RC_DONS.unshift(d);
@@ -3882,7 +3930,7 @@ function repOuvrirType(type){
    La clé Airtable n'est JAMAIS écrite ici (données de santé).
    ======================================================================= */
 const AT_CONFIG = {
-  proxyUrl: "https://mon-bando-app-8zpj.vercel.app/api/airtable",  // service sécurisé (actif)
+  proxyUrl: "https://mon-bando-app.vercel.app/api/airtable",  // service sécurisé (actif)
   baseId:   "appsIbXLTxcTBzTlQ",      // votre base Mon Bandô
   tables: {
     dons:       "tblC4diIAxsxAraks",
@@ -3929,7 +3977,16 @@ const DON_FIELDS = {
   civilite:    "fldGAqNzCNNQYqnuN",
   nuanceIA:    "fldMpYYk27ehN4cQ0", // Nuance affinée (IA)
   remerciee:   "fld3FpgAkw3t5qQBl", // Remerciée
-  notes:       "fldFEIC5069ObwVXx"
+  notes:       "fldFEIC5069ObwVXx",
+  adresse:     "fldogDW4MCpfeRya3", // Adresse postale
+  cp:          "fldEh44chCQkMScBG", // Code postal
+  insta:       "fldlXrfITBqZ3rVDL", // Instagram
+  tiktok:      "fld3lgqIXBtITFYB0", // TikTok
+  facebook:    "fld883ZQjsY7blbZZ", // Facebook
+  nature:      "fldhNDtZ0JrRJ6nxR", // Nature / traitement (déjà défini plus haut, alias)
+  consent:     "fld26cH5z4Vyos0wC", // Consentement
+  partageOK:   "fldSpRbDiLkbTQYKn", // Partage réseaux OK
+  vousEtes:    "fldBpXZSnnTR5JmM1"  // Vous êtes (particulier / salon / entreprise…)
 };
 /* Valeurs exactes du menu Statut (pour écrire sans se tromper) */
 const DON_STATUTS = { aTrier:"À trier", valide:"Validé", reserve:"Réservé", utilise:"Utilisé", refuse:"Refusé", attente:"En attente de don" };
@@ -3953,6 +4010,7 @@ async function chargerDonsAirtable(){
     const statutAT = (f["Statut"] && f["Statut"].name) ? f["Statut"].name : f["Statut"];
     return {
       _recId:   r.id,
+      _cree:    r.createdTime||"",
       code:     f["Code"],
       statut:   mapStatut[statutAT] || "Attendu",
       statutAirtable: statutAT,
@@ -3967,8 +4025,18 @@ async function chargerDonsAirtable(){
       texture:  f["Texture"]||"",
       nuanceIA: f["Nuance affinée (IA)"]||"",
       bac:      f["Localisation (bac)"]||"",
-      canal:    f["Source"]||"",
-      recuLe:   f["Date réception"]||""
+      canal:    f["Vous êtes"]||f["Source"]||"",
+      recuLe:   f["Date réception"]||"",
+      civilite: f["Civilité"]||"",
+      adresse:  f["Adresse postale"]||"",
+      cp:       f["Code postal"]||"",
+      insta:    f["Instagram"]||"",
+      tiktok:   f["TikTok"]||"",
+      facebook: f["Facebook"]||"",
+      nature:   f["Nature / traitement"]||"",
+      notes:    f["Notes"]||"",
+      consent:  !!f["Consentement"],
+      partageOK:!!f["Partage réseaux OK"]
     };
   });
 }
@@ -3989,6 +4057,17 @@ async function creerDonAirtable(d){
   if(d.couleur) fields[DON_FIELDS.couleur]  = d.couleur;
   if(d.texture) fields[DON_FIELDS.texture]  = d.texture;
   if(d.bac)     fields[DON_FIELDS.bac]      = d.bac;
+  if(d.civilite)fields[DON_FIELDS.civilite] = d.civilite;
+  if(d.adresse) fields[DON_FIELDS.adresse]  = d.adresse;
+  if(d.cp)      fields[DON_FIELDS.cp]       = d.cp;
+  if(d.insta)   fields[DON_FIELDS.insta]    = d.insta;
+  if(d.tiktok)  fields[DON_FIELDS.tiktok]   = d.tiktok;
+  if(d.nature)  fields[DON_FIELDS.nature]   = d.nature;
+  if(d.notes)   fields[DON_FIELDS.notes]    = d.notes;
+  if(d.canal)   fields[DON_FIELDS.vousEtes] = d.canal;
+  if(d.recuLe)  fields[DON_FIELDS.dateRecep]= d.recuLe;
+  if(d.consent) fields[DON_FIELDS.consent]  = true;
+  if(d.partageOK) fields[DON_FIELDS.partageOK] = true;
   return airtable("createRecord", { tableId: AT_CONFIG.tables.dons, fields });
 }
 

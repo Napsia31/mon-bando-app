@@ -1,0 +1,24 @@
+{
+  "name": "Atelier Mon Bandô",
+  "short_name": "Mon Bandô",
+  "description": "Application de l'atelier Mon Bandô — dons, tissage, fabrication.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F8E3D7",
+  "theme_color": "#254961",
+  "icons": [
+    {
+      "src": "/icone-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icone-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
