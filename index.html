@@ -2096,10 +2096,26 @@ function rcRendreListe(){
 
 function rcMedias(d){
   const items=[];
-  for(let i=0;i<(d.photos||0);i++) items.push(`<div class="rc-media" onclick="rcAgrandir()"><img src="${PHOTO_CLIENTE}" alt=""><div class="tag">photo</div></div>`);
-  for(let i=0;i<(d.videos||0);i++) items.push(`<div class="rc-media" onclick="rcAgrandir()"><img src="${PHOTO_CLIENTE}" alt=""><div class="play">▶</div><div class="tag">vidéo</div></div>`);
-  if(items.length===0) return '<div style="font-size:12.5px;color:#5b7387">Aucun média encore.</div>';
+  // vraies photos venues d'Airtable
+  (d.medias||[]).forEach(m=>{
+    items.push(`<div class="rc-media" onclick="rcVoirPhoto('${m.url}')"><img src="${m.vignette}" alt="${m.nom||''}"><div class="tag">photo</div></div>`);
+  });
+  // vidéos venues d'Airtable
+  (d.videos||[]).forEach(v=>{
+    items.push(`<div class="rc-media" onclick="window.open('${v.url}','_blank')"><div style="width:100%;height:100%;background:var(--bleu);display:flex;align-items:center;justify-content:center;font-size:26px">🎬</div><div class="play">▶</div><div class="tag">vidéo</div></div>`);
+  });
+  // formulaire de don signé
+  (d.formulairePJ||[]).forEach(f=>{
+    items.push(`<div class="rc-media" onclick="rcVoirPhoto('${f.url}')"><img src="${f.vignette}" alt="formulaire"><div class="tag">formulaire</div></div>`);
+  });
+  if(items.length===0) return '<div style="font-size:12.5px;color:#5b7387">Aucun média envoyé par la donneuse.</div>';
   return `<div class="rc-medias">${items.join('')}</div>`;
+}
+/* Ouvre une photo en grand */
+function rcVoirPhoto(url){
+  document.getElementById('photo-viewer-img').src=url;
+  document.getElementById('photo-viewer-count').textContent='Photo envoyée par la donneuse';
+  document.getElementById('photo-viewer').style.display='flex';
 }
 const rcL=(lab,val)=>`<div class="rc-ligne"><span class="lab">${lab}</span><span class="val">${val}</span></div>`;
 function rcDonneuse(d){
@@ -2132,6 +2148,7 @@ function rcOuvrir(ref){
         ${rcL("Statut", "En attente de don")}
         ${d.recuLe?rcL("Formulaire reçu le", rcFmt(d.recuLe)):''}</div>`
     + rcDonneuse(d)
+    + `<div class="rc-bloc"><h3>Médias envoyés par la donneuse</h3>${rcMedias(d)}</div>`
     + `<div class="rc-bloc"><h3>À l'arrivée du colis</h3>
         <div class="rc-champ"><label>Photo / vidéo de la mèche reçue</label>
           <button class="rc-btn-photo" onclick="toast('📷 Appareil photo — média de la mèche')">📷 Prendre photo / vidéo</button></div>
@@ -4036,7 +4053,11 @@ async function chargerDonsAirtable(){
       nature:   f["Nature / traitement"]||"",
       notes:    f["Notes"]||"",
       consent:  !!f["Consentement"],
-      partageOK:!!f["Partage réseaux OK"]
+      partageOK:!!f["Partage réseaux OK"],
+      // pièces jointes : on garde les vraies URL d'Airtable
+      medias:   (f["Photo"]||[]).map(a=>({url:a.url, vignette:(a.thumbnails&&a.thumbnails.large?a.thumbnails.large.url:a.url), type:"photo", nom:a.filename})),
+      videos:   (f["Vidéo (partage réseaux)"]||[]).map(a=>({url:a.url, type:"video", nom:a.filename})),
+      formulairePJ: (f["Formulaire de don signé (PJ)"]||[]).map(a=>({url:a.url, vignette:(a.thumbnails&&a.thumbnails.large?a.thumbnails.large.url:a.url), nom:a.filename}))
     };
   });
 }
