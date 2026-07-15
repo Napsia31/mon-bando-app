@@ -17,7 +17,21 @@ export default async function handler(req, res) {
   if (!TOKEN) return res.status(500).json({ error: "AIRTABLE_TOKEN manquant (à configurer dans Vercel)" });
 
   try {
-    const { action, baseId, tableId, recordId, fields } = req.body || {};
+    const { action, baseId, tableId, recordId, fields, fieldName, file, contentType, filename } = req.body || {};
+
+    // --- Upload d'une pièce jointe (photo) directement dans Airtable (max 5 Mo) ---
+    if (action === "uploadAttachment") {
+      const up = "https://content.airtable.com/v0/" + baseId + "/" + recordId + "/" + encodeURIComponent(fieldName) + "/uploadAttachment";
+      const r = await fetch(up, {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + TOKEN, "Content-Type": "application/json" },
+        body: JSON.stringify({ contentType, file, filename })
+      });
+      const data = await r.json();
+      if (!r.ok) return res.status(r.status).json(data);
+      return res.status(200).json(data);
+    }
+
     const base = "https://api.airtable.com/v0/" + baseId + "/" + encodeURIComponent(tableId);
     const auth = { "Authorization": "Bearer " + TOKEN, "Content-Type": "application/json" };
     let url = base, method = "GET", body = null;
