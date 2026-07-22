@@ -2010,6 +2010,13 @@ function allerA(vue){
     document.getElementById('vue-tissage').classList.add('active');
     document.getElementById('nav-tissage').classList.add('actif');
     tiRendre();
+    if(atActif()){
+      Promise.all([chargerDonsAirtable(), chargerTramesAirtable()]).then(([dons, trames])=>{
+        if(dons){ RC_DONS.length=0; dons.forEach(d=>RC_DONS.push(d)); }
+        if(trames){ TRAMES_STOCK.length=0; trames.forEach(t=>TRAMES_STOCK.push(t)); }
+        tiRendre();
+      }).catch(()=>toast("Chargement Airtable impossible."));
+    }
   } else if(vue==='commandes'){
     document.getElementById('vue-commandes').classList.add('active');
     document.getElementById('nav-commandes').classList.add('actif');
@@ -2486,6 +2493,19 @@ let TRAMES_STOCK = [
 ];
 
 function tiFile(){ // dons à tisser
+  // Connecté : les vrais dons validés qui n'ont pas encore de trame
+  if(atActif()){
+    const codesTrames = new Set(TRAMES_STOCK.map(t=>t.don).filter(Boolean));
+    return RC_DONS
+      .filter(d=> d.statut==="Validé" && !codesTrames.has(d.code))
+      .map(d=>({type:"don", _recId:d._recId, code:d.code||"(sans code)",
+        qui:"Stock — "+(d.couleur||'?'),
+        couleur:d.couleur, cm:d.longueur, g:d.poids, texture:d.texture,
+        nature:d.nature, nuanceIA:d.nuanceIA, bac:d.bac,
+        medias:d.medias||[], date:d.recuLe||d._cree||""}))
+      .sort((a,b)=> new Date(a.date||0)-new Date(b.date||0));
+  }
+  // Démo
   return DONS.map(d=>({type:"don", code:d.code, qui:"Stock — "+d.couleur,
       couleur:d.couleur, cm:d.cm, g:d.g, texture:d.texture, densite:d.densite,
       nuanceIA:d.nuanceIA, bac:d.bac, date:d.date||"2026-06-20"}))
@@ -2506,12 +2526,16 @@ function tiRendre(){
     if(!file.length){ z.innerHTML='<div style="text-align:center;color:#5b7387;padding:30px;font-size:14px">Rien à tisser pour le moment 🎉</div>'; return; }
     z.innerHTML=file.map((x,i)=>{
       const grad=`linear-gradient(160deg, ${TI_CHEV[x.couleur]||'#6b4a33'} 0%, #2e1f14 100%)`;
+      // vraie photo du don si elle existe, sinon pastille couleur
+      const vign = (x.medias && x.medias.length)
+        ? `<div class="ti-vign" style="background-image:url('${x.medias[0].vignette}');background-size:cover;background-position:center"></div>`
+        : `<div class="ti-vign" style="background:${grad}"></div>`;
       return `<div class="ti-carte" onclick="tiOuvrir(${i})">
         <div class="ti-ordre">${i+1}</div>
-        <div class="ti-vign" style="background:${grad}"></div>
+        ${vign}
         <div class="ti-txt"><div class="ti-rang">${x.code}</div>
           <div class="ti-nom">${x.qui}</div>
-          <div class="ti-meta">${x.couleur} · ${x.cm} cm · ${x.g} g · 📍 ${x.bac||''}</div></div>
+          <div class="ti-meta">${x.couleur||'?'} · ${x.cm||'?'} cm · ${x.g||'?'} g${x.bac?' · 📍 '+x.bac:''}</div></div>
         <div class="ti-tag ti-tag-don">✂️ Don<br>à tisser</div></div>`;
     }).join('');
   } else {
@@ -2524,11 +2548,14 @@ function tiRendre(){
         ? '<div class="ti-etat ti-e-dispo">🟢 Disponible</div>'
         : '<div class="ti-etat ti-e-reserve">🔒 Réservé</div>';
       const idx=TRAMES_STOCK.indexOf(t);
+      const vign = (t.medias && t.medias.length)
+        ? `<div class="ti-vign" style="background-image:url('${t.medias[0].vignette}');background-size:cover;background-position:center"></div>`
+        : `<div class="ti-vign" style="background:${grad}"></div>`;
       return `<div class="ti-carte" onclick="tiOuvrirTrame(${idx})">
-        <div class="ti-vign" style="background:${grad}"></div>
+        ${vign}
         <div class="ti-txt"><div class="ti-rang">${t.code}</div>
           <div class="ti-nom">${t.couleur} · ${t.cm} cm</div>
-          <div class="ti-meta">${t.g} g · 📍 ${t.bac} · 📷 ${t.photos}${t.videos?' · 🎬 '+t.videos:''}${t.etat==='Réservé'&&t.motif?'<br>'+t.motif:''}</div></div>
+          <div class="ti-meta">${t.g} g${t.bac?' · 📍 '+t.bac:''} · 📷 ${t.photos}${t.videos?' · 🎬 '+t.videos:''}${t.etat==='Réservé'&&t.motif?'<br>'+t.motif:''}</div></div>
         ${badge}</div>`;
     }).join('');
     // barre : lien vers les disponibles (diffusable dans l'app)
@@ -2541,20 +2568,30 @@ function tiOuvrir(i){
   const grad=`linear-gradient(160deg, ${TI_CHEV[x.couleur]||'#6b4a33'} 0%, #2e1f14 100%)`;
   const obj=tiObjectif(x.g);
   const L=(l,v)=>`<div class="rc-ligne"><span class="lab">${l}</span><span class="val">${v}</span></div>`;
+  // vraies photos du don, cliquables
+  const visuel = (x.medias && x.medias.length)
+    ? `<div class="rc-medias" style="margin-bottom:10px">${x.medias.map(m=>`<div class="rc-media" onclick="rcVoirPhoto('${m.url}')"><img src="${m.vignette}" alt=""><div class="tag">don</div></div>`).join('')}</div>`
+    : `<div style="height:120px;border-radius:12px;background:${grad};margin-bottom:10px"></div>`;
+  const codeProchain = tiProchainCode();
   const corps=`<div class="rc-bloc"><h3>Don du stock à tisser</h3>
-      <div style="height:120px;border-radius:12px;background:${grad};margin-bottom:10px"></div>
-      ${L("Code", x.code)}${L("Origine", x.qui)}${L("Couleur", x.couleur)}
-      ${L("Longueur", (x.cm||'?')+' cm')}${L("Poids reçu", (x.g||'?')+' g')}${x.texture?L("Texture", x.texture):''}</div>
+      ${visuel}
+      ${L("Code", x.code)}${L("Origine", x.qui)}${L("Couleur", x.couleur||'—')}
+      ${L("Longueur", (x.cm||'?')+' cm')}${L("Poids reçu", (x.g||'?')+' g')}${x.texture?L("Texture", x.texture):''}${x.nature?L("Nature", x.nature):''}</div>
     <div class="rc-bloc"><h3>Nuance</h3><div class="rc-ia">🤖 ${x.nuanceIA||'—'}</div></div>
     <div class="rc-bloc"><h3>Après tissage — je saisis</h3>
       <div class="rc-champ"><label>Poids de la trame obtenue (g)${obj?` — attendu ≈ ${obj} g`:''}</label>
         <input id="ti-poids" type="number" inputmode="numeric" placeholder="${obj||'ex. 14'}"></div>
+      <div class="rc-champ"><label>Longueur de la trame (cm)</label>
+        <input id="ti-long" type="number" inputmode="numeric" placeholder="${x.cm||'ex. 35'}" value="${x.cm||''}"></div>
       <div class="rc-champ"><label>Bac de rangement</label><input id="ti-bac" type="text" placeholder="ex. B3" value="${x.bac||''}"></div>
-      <div class="rc-champ"><label>Photos & vidéo de la trame (plusieurs angles)</label>
-        <button class="rc-btn-photo" onclick="toast('📷 Appareil photo — photo principale, angles, vidéo')">📷 Photographier / filmer la trame</button>
-        <div style="font-size:11px;color:var(--bleu-70);margin-top:5px">1 photo principale + jusqu'à 4 angles + 1 vidéo.</div></div>
+      <div class="rc-champ"><label>Destination</label><select id="ti-dest">
+        <option>Indifférent</option><option>Prêt-à-porter</option><option>Complément mixte</option><option>Naturelle cliente</option></select></div>
+      <div class="rc-champ"><label>Notes</label><input id="ti-notes" type="text" placeholder="Remarque libre"></div>
+      <div class="rc-champ"><label>Photos de la trame</label>
+        <button class="rc-btn-photo" onclick="tiChoisirPhotosTrame()">📷 Prendre ou choisir des photos</button>
+        <div id="ti-photos-info" style="font-size:11.5px;color:var(--bleu-70);margin-top:5px">Envoyées à la création de la trame.</div></div>
     </div>
-    <button class="rc-btn rc-btn-valide" onclick="tiTrameCreee('${x.code}')">🧵 Trame créée → crée le T‑ (Disponible)</button>`;
+    <button class="rc-btn rc-btn-valide" onclick="tiTrameCreee('${x._recId||x.code}')">🧵 Trame créée → crée ${codeProchain} (En stock)</button>`;
   document.getElementById('ti-fiche').innerHTML=
     `<div class="rc-tete"><div><div class="t">${x.code}</div><div class="f">Don du stock</div></div>
       <button class="rc-fermer" onclick="tiFermer()">×</button></div>${corps}`;
@@ -2563,39 +2600,86 @@ function tiOuvrir(i){
   document.getElementById('ti-fiche').scrollTop=0;
 }
 function tiFermer(){ document.getElementById('ti-fiche').classList.remove('on'); document.getElementById('ti-voile').classList.remove('on'); }
-function tiTrameCreee(codeDon){
-  const num=String(103+Math.floor(Math.random()*90)).padStart(3,'0');
-  const nouveau="T-2026-"+num;
-  const d=DONS.find(x=>x.code===codeDon);
-  const poids=parseFloat((document.getElementById('ti-poids')||{}).value)|| (d?Math.round(d.g*0.9):14);
-  const bac=(document.getElementById('ti-bac')||{}).value || (d?d.bac:'B3');
-  // crée la trame prête, état Disponible
-  TRAMES_STOCK.unshift({code:nouveau, don:codeDon, couleur:d?d.couleur:'Châtain', cm:d?d.cm:35, g:poids, bac,
-    texture:d?d.texture:'', nuanceIA:d?d.nuanceIA:'', etat:"Disponible", photos:1, videos:0, date:"2026-07-12"});
-  const idx=DONS.findIndex(x=>x.code===codeDon); if(idx>=0) DONS.splice(idx,1);
+/* Photos choisies pour la trame en cours de création */
+let TI_PHOTOS = [];
+function tiChoisirPhotosTrame(){
+  const input=document.createElement('input');
+  input.type='file'; input.accept='image/*'; input.multiple=true; input.capture='environment';
+  input.onchange=()=>{
+    TI_PHOTOS=Array.from(input.files||[]);
+    const info=document.getElementById('ti-photos-info');
+    if(info) info.textContent = TI_PHOTOS.length
+      ? `${TI_PHOTOS.length} photo(s) prête(s) — envoyées à la création.`
+      : "Envoyées à la création de la trame.";
+  };
+  input.click();
+}
+async function tiTrameCreee(refDon){
+  const nouveau = tiProchainCode();
+  // retrouve le don (connecté : par recId ; démo : par code)
+  const dAT = RC_DONS.find(x=>(x._recId&&x._recId===refDon) || x.code===refDon);
+  const d   = dAT || DONS.find(x=>x.code===refDon);
+  const g=v=>document.getElementById(v)?document.getElementById(v).value:'';
+  const poids = parseFloat(g('ti-poids')) || (d ? Math.round((d.poids||d.g||15)*0.9) : 14);
+  const cm    = parseFloat(g('ti-long'))  || (d ? (d.longueur||d.cm||35) : 35);
+  const bac   = g('ti-bac') || (d?d.bac:'') || '';
+  const trame = {code:nouveau, don:(d?d.code:''), couleur:(d?d.couleur:'')||'', cm, g:poids, bac,
+    texture:(d?d.texture:'')||'', nature:(d?d.nature:'')||'',
+    nuanceIA:(d?d.nuanceIA:'')||'', etat:"Disponible",
+    destination:g('ti-dest')||'Indifférent', notes:g('ti-notes')||'',
+    photos:0, videos:0, medias:[], date:new Date().toISOString().slice(0,10)};
+
+  if(atActif() && dAT && dAT._recId){
+    try{
+      const res = await creerTrameAirtable(trame, dAT._recId);
+      if(res && res.id){
+        trame._recId = res.id;
+        // envoie les photos de la trame
+        let ok=0;
+        for(const f of TI_PHOTOS){ try{ await envoyerPhotoTrame(res.id, f); ok++; }catch(e){} }
+        TI_PHOTOS=[];
+        // le don devient "Utilisé"
+        try{ await majStatutDonAirtable(dAT._recId, DON_STATUTS.utilise); }catch(e){}
+        toast(`✅ ${nouveau} créée depuis ${d.code||''}${ok?` · ${ok} photo(s)`:''} — traçabilité enregistrée.`);
+      }
+    }catch(e){ toast("Trame non enregistrée dans Airtable."); }
+    // recharge les vraies données
+    const [dons, trames] = await Promise.all([chargerDonsAirtable(), chargerTramesAirtable()]);
+    if(dons){ RC_DONS.length=0; dons.forEach(x=>RC_DONS.push(x)); }
+    if(trames){ TRAMES_STOCK.length=0; trames.forEach(x=>TRAMES_STOCK.push(x)); }
+  } else {
+    TRAMES_STOCK.unshift(trame);
+    const idx=DONS.findIndex(x=>x.code===refDon); if(idx>=0) DONS.splice(idx,1);
+    TI_PHOTOS=[];
+    toast(`✅ ${nouveau} créée — Disponible.`);
+  }
   tiFermer(); tiOnglet="pretes"; tiTab('pretes');
-  toast(`✅ ${nouveau} créée depuis ${codeDon} — Disponible. Traçabilité couronne → donneuse enregistrée.`);
 }
 /* Fiche d'une trame prête : médias + état + réservation */
 function tiOuvrirTrame(idx){
   const t=TRAMES_STOCK[idx]; if(!t) return;
   const grad=`linear-gradient(160deg, ${TI_CHEV[t.couleur]||'#6b4a33'} 0%, #2e1f14 100%)`;
   const L=(l,v)=>`<div class="rc-ligne"><span class="lab">${l}</span><span class="val">${v}</span></div>`;
-  // médias : principale + angles + vidéo
+  // médias réels de la trame (Airtable)
   let medias='<div class="ti-medias">';
-  for(let i=0;i<(t.photos||0);i++) medias+=`<div class="ti-media" onclick="agrandirPhoto(1,1)"><img src="${PHOTO_CLIENTE}">${i===0?'<span class="pr">Principale</span>':''}</div>`;
-  for(let i=0;i<(t.videos||0);i++) medias+=`<div class="ti-media" onclick="agrandirPhoto(1,1)"><img src="${PHOTO_CLIENTE}"><span class="pl">▶</span></div>`;
-  if((t.photos||0)<5) medias+=`<div class="ti-media add" onclick="toast('📷 Ajouter une photo (max 5) ou la vidéo')">＋</div>`;
+  (t.medias||[]).forEach((m,i)=>{
+    medias+=`<div class="ti-media" onclick="rcVoirPhoto('${m.url}')"><img src="${m.vignette}">${i===0?'<span class="pr">Principale</span>':''}</div>`;
+  });
+  medias+=`<div class="ti-media add" onclick="tiPhotographierTrame('${t._recId||''}',true)">＋</div>`;
   medias+='</div>';
+  if(!(t.medias||[]).length) medias='<div style="font-size:12.5px;color:#5b7387;margin-bottom:8px">Aucune photo.</div>'+medias;
   const badge = t.etat==="Disponible"
     ? '<span class="ti-etat ti-e-dispo">🟢 Disponible</span>'
     : '<span class="ti-etat ti-e-reserve">🔒 Réservé</span>';
+  const visuel = (t.medias && t.medias.length)
+    ? `<div style="height:120px;border-radius:12px;background-image:url('${t.medias[0].vignette}');background-size:cover;background-position:center;margin-bottom:10px"></div>`
+    : `<div style="height:120px;border-radius:12px;background:${grad};margin-bottom:10px"></div>`;
   let corps=`<div class="rc-bloc"><h3>Trame ${badge}</h3>
-      <div style="height:120px;border-radius:12px;background:${grad};margin-bottom:10px"></div>
-      ${L("Code", t.code)}${L("Issue du don", t.don||'—')}${L("Couleur", t.couleur)}
-      ${L("Longueur", t.cm+' cm')}${L("Poids", t.g+' g')}${L("Bac", '📍 '+t.bac)}${t.texture?L("Texture", t.texture):''}</div>
+      ${visuel}
+      ${L("Code", t.code)}${L("Issue du don", t.don||'—')}${L("Couleur", t.couleur||'—')}
+      ${L("Longueur", (t.cm||'?')+' cm')}${L("Poids", (t.g||'?')+' g')}${t.bac?L("Bac", '📍 '+t.bac):''}${t.texture?L("Texture", t.texture):''}${t.nature?L("Nature", t.nature):''}${t.destination?L("Destination", t.destination):''}${t.notes?L("Notes", t.notes):''}</div>
     <div class="rc-bloc"><h3>Nuance</h3><div class="rc-ia">🤖 ${t.nuanceIA||'—'}</div></div>
-    <div class="rc-bloc"><h3>Médias — 1 principale + 4 angles + 1 vidéo</h3>${medias}</div>`;
+    <div class="rc-bloc"><h3>Photos de la trame</h3>${medias}</div>`;
   if(t.etat==="Disponible"){
     corps+=`<div class="rc-bloc"><h3>Diffusion site web — Naturelle</h3>
       <div class="ti-diffuse" onclick="tiDiffuser(${idx})">
@@ -2634,12 +2718,14 @@ function tiDiffuser(idx){
 function tiReserver(idx){
   const t=TRAMES_STOCK[idx]; if(!t) return;
   t.etat="Réservé"; t.motif=(document.getElementById('ti-motif')||{}).value||"Réservée";
+  if(atActif() && t._recId){ majStatutTrameAirtable(t._recId, TRAME_STATUTS.reservee).catch(()=>toast("Statut non enregistré dans Airtable.")); }
   tiFermer(); tiRendre();
   toast(`🔒 ${t.code} réservée — ${t.motif}.`);
 }
 function tiLiberer(idx){
   const t=TRAMES_STOCK[idx]; if(!t) return;
   t.etat="Disponible"; t.motif="";
+  if(atActif() && t._recId){ majStatutTrameAirtable(t._recId, TRAME_STATUTS.stock).catch(()=>toast("Statut non enregistré dans Airtable.")); }
   tiFermer(); tiRendre();
   toast(`🟢 ${t.code} de nouveau disponible.`);
 }
@@ -4192,6 +4278,111 @@ function rcPrendrePhotos(ref){
     // recharge les dons pour afficher les nouvelles photos
     const dons = await chargerDonsAirtable();
     if(dons){ RC_DONS.length=0; dons.forEach(x=>RC_DONS.push(x)); rcRendreListe(); rcOuvrir(ref); }
+  };
+  input.click();
+}
+
+/* --- Correspondance champs Airtable (table Trames stock) --- */
+const TRAME_FIELDS = {
+  code:      "fldJ8GMDv6qaTs3ci", // Code trame
+  donSource: "fldYXhSgmcEyI3j1H", // Don(s) source (lien)
+  longueur:  "fldebTn1aBA7sNubB", // Longueur (cm)
+  couleur:   "fldiR2yP0xtzgGWD9",
+  texture:   "fldolHfdtL1pV92IP", // Matière / texture
+  nature:    "fldMHhUExIeWPJKLy",
+  poids:     "fldnTpANW07LswfUt", // Poids (g)
+  statut:    "fldiuHhodGENfHRSb", // En stock / Réservée / Utilisée
+  destination:"fldVqoCQsPz38b6Pt",
+  photo:     "fldfYZzTyKOMqyBcr",
+  notes:     "fldp584e0ngZ7Q2IS",
+  nuanceIA:  "fldZ2hVO4qRzlvO37"
+};
+const TRAME_STATUTS = { stock:"En stock", reservee:"Réservée", utilisee:"Utilisée" };
+
+/* Lecture des trames depuis Airtable */
+async function chargerTramesAirtable(){
+  if(!atActif()) return null;
+  const data = await airtable("listRecords", { tableId: AT_CONFIG.tables.trames });
+  return (data.records||[]).map(r=>{
+    const f = r.fields||{};
+    const st = (f["Statut"] && f["Statut"].name) ? f["Statut"].name : f["Statut"];
+    return {
+      _recId:  r.id,
+      _cree:   r.createdTime||"",
+      code:    f["Code trame"]||"",
+      don:     (f["Don(s) source"]||[])[0]||"",
+      couleur: f["Couleur"]||"",
+      cm:      f["Longueur (cm)"]||0,
+      g:       f["Poids (g)"]||0,
+      texture: f["Matière / texture"]||"",
+      nature:  f["Nature"]||"",
+      nuanceIA:f["Nuance affinée (IA)"]||"",
+      bac:     "",
+      etat:    st==="Réservée" ? "Réservé" : st==="Utilisée" ? "Utilisée" : "Disponible",
+      destination: f["Destination"]||"",
+      notes:   f["Notes"]||"",
+      diffuser:false,
+      date:    (r.createdTime||"").slice(0,10),
+      medias:  (f["Photo"]||[]).map(a=>({url:a.url, vignette:(a.thumbnails&&a.thumbnails.large?a.thumbnails.large.url:a.url), nom:a.filename})),
+      photos:  (f["Photo"]||[]).length,
+      videos:  0
+    };
+  });
+}
+/* Prochain code T- : cherche le plus grand T-XXXX et ajoute 1 */
+function tiProchainCode(){
+  let max=0;
+  TRAMES_STOCK.forEach(t=>{
+    const m=(t.code||'').match(/^T-(\d+)$/);
+    if(m){ const n=parseInt(m[1],10); if(n>max) max=n; }
+  });
+  return "T-"+String(max+1).padStart(4,'0');
+}
+/* Création d'une trame dans Airtable */
+async function creerTrameAirtable(t, recIdDon){
+  if(!atActif()) return null;
+  const fields = {};
+  fields[TRAME_FIELDS.code]    = t.code;
+  fields[TRAME_FIELDS.statut]  = TRAME_STATUTS.stock;
+  if(t.couleur) fields[TRAME_FIELDS.couleur]  = t.couleur;
+  if(t.cm)      fields[TRAME_FIELDS.longueur] = +t.cm;
+  if(t.g)       fields[TRAME_FIELDS.poids]    = +t.g;
+  if(t.texture) fields[TRAME_FIELDS.texture]  = t.texture;
+  if(t.nature)  fields[TRAME_FIELDS.nature]   = t.nature;
+  if(t.notes)   fields[TRAME_FIELDS.notes]    = t.notes;
+  if(t.destination) fields[TRAME_FIELDS.destination] = t.destination;
+  if(recIdDon)  fields[TRAME_FIELDS.donSource] = [recIdDon]; // lien vers le don
+  return airtable("createRecord", { tableId: AT_CONFIG.tables.trames, fields });
+}
+/* Mise à jour du statut d'une trame (réserver / libérer) */
+async function majStatutTrameAirtable(recId, statut){
+  if(!atActif()) return null;
+  const fields = {}; fields[TRAME_FIELDS.statut] = statut;
+  return airtable("updateRecord", { tableId: AT_CONFIG.tables.trames, recordId: recId, fields });
+}
+/* Envoie une photo dans le champ Photo d'une trame */
+async function envoyerPhotoTrame(recId, file){
+  const base64 = await reduirePhoto(file, 1600);
+  return airtable("uploadAttachment", {
+    recordId: recId, fieldName: "Photo",
+    contentType: "image/jpeg",
+    filename: (file.name||"trame").replace(/\.[^.]+$/,'') + ".jpg",
+    file: base64
+  });
+}
+/* Bouton : photographier une trame */
+function tiPhotographierTrame(recId, retour){
+  if(!recId){ toast("Trame introuvable."); return; }
+  const input=document.createElement('input');
+  input.type='file'; input.accept='image/*'; input.multiple=true; input.capture='environment';
+  input.onchange = async ()=>{
+    const fichiers=Array.from(input.files||[]); if(!fichiers.length) return;
+    toast(`Envoi de ${fichiers.length} photo(s)…`);
+    let ok=0;
+    for(const f of fichiers){ try{ await envoyerPhotoTrame(recId, f); ok++; }catch(e){} }
+    toast(ok?`${ok} photo(s) ajoutée(s).`:"Envoi impossible.");
+    const tr = await chargerTramesAirtable();
+    if(tr){ TRAMES_STOCK.length=0; tr.forEach(x=>TRAMES_STOCK.push(x)); tiRendre(); if(retour) tiOuvrirTrame(TRAMES_STOCK.findIndex(x=>x._recId===recId)); }
   };
   input.click();
 }
