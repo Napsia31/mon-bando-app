@@ -2170,7 +2170,9 @@ function rcOuvrir(ref){
           <div class="rc-champ"><label>Couleur</label><select><option>Châtain</option><option>Châtain clair</option><option>Blond</option><option>Noir</option><option>Roux</option></select></div>
           <div class="rc-champ"><label>Texture</label><select><option>Lisse</option><option>Ondulé</option><option>Bouclé</option><option>Crépu</option></select></div></div>
         <div class="rc-champ"><label>Nuance (votre œil)</label><input type="text" placeholder="ex. Châtain doré"></div>
-        <div class="rc-ia">🤖 Nuance affinée (IA) : proposée automatiquement à partir des photos.</div></div>`
+        <div class="rc-ia" id="rc-ia-zone-${REF}">🤖 <b>Analyse IA</b> — prenez une photo de la mèche avec une règle, l'IA remplit teinte, longueur et texture, et les enregistre dans le don.
+          <button class="rc-btn-photo" style="margin-top:8px;background:var(--corail)" onclick="rcAnalyserDon('${REF}')">🤖 Photo + analyse IA (règle conseillée)</button>
+          <div id="rc-ia-res-${REF}" style="margin-top:8px"></div></div></div>`
     + `<button class="rc-btn rc-btn-valide" onclick="rcValider('${REF}')">✓ Conforme — ranger en bac</button>`
     + `<button class="rc-btn rc-btn-nc" onclick="rcRefuser('${REF}')">Non conforme</button>`;
   } else if(d.statut==="Validé"){
@@ -2407,7 +2409,7 @@ function rcNouveauDon(){
       <div class="rc-champ"><label>Notes</label><input id="nd-notes" type="text" placeholder="Remarque libre"></div>
       <div class="rc-champ"><label><input id="nd-consent" type="checkbox" style="width:auto;margin-right:8px">Consentement donné</label></div>
       <div class="rc-champ"><label><input id="nd-partage" type="checkbox" style="width:auto;margin-right:8px">Partage réseaux autorisé</label></div>
-      <input type="hidden" id="nd-nuanceIA" value="">
+      <div class="rc-champ"><label>Nuance affinée (corrigez la vôtre si besoin)</label><input type="text" id="nd-nuanceIA" value="" placeholder="proposée par l'IA — modifiable"></div>
       <div class="rc-ia" id="nd-ia-zone">🤖 <b>Analyse IA</b> — ajoutez une photo (avec une règle pour la longueur), puis lancez l'analyse : teinte, longueur et texture proposées automatiquement.
         <button class="rc-btn-photo" id="nd-ia-btn" style="margin-top:8px;background:var(--corail)" onclick="ndAnalyserTeinte()">🤖 Analyser la photo (teinte · longueur · texture)</button>
         <div id="nd-ia-res" style="margin-top:8px"></div></div></div>
@@ -4833,6 +4835,103 @@ function tiPhotographierTrame(recId, retour){
     if(tr){ TRAMES_STOCK.length=0; tr.forEach(x=>TRAMES_STOCK.push(x)); tiRendre(); if(retour) tiOuvrirTrame(TRAMES_STOCK.findIndex(x=>x._recId===recId)); }
   };
   input.click();
+}
+
+/* Prend une photo (règle conseillée), l'analyse via l'IA, et enregistre
+   teinte + nuance + longueur + texture directement dans le don Airtable. */
+async function rcAnalyserDon(ref){
+  const d = RC_DONS.find(x=>(x._recId&&x._recId===ref) || x.code===ref);
+  if(!d){ toast("Don introuvable."); return; }
+  const input = document.createElement('input');
+  input.type='file'; input.accept='image/*'; input.capture='environment';
+  input.onchange = async ()=>{
+    const f = (input.files||[])[0];
+    if(!f) return;
+    const res = document.getElementById('rc-ia-res-'+ref);
+    if(res) res.innerHTML = `<span style="color:#5b7387">Analyse de la photo…</span>`;
+    try{
+      const dataUrl = await fileVersDataURL(f);
+      const r = await fetch(IA_TEINTE_URL, {
+        method:"POST", headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ imageBase64: dataUrl })
+      });
+      const data = await r.json();
+      if(!r.ok || data.error){
+        if(res) res.innerHTML = `<span style="color:#B5544B">⚠️ Analyse indisponible${data.detail?` : ${data.detail}`:''}.</span>`;
+        return;
+      }
+      // Report dans l'objet local (proposition, pas encore enregistrée)
+      const coul = data.categorie ? (ndMapCouleur ? ndMapCouleur(data.categorie) : data.categorie) : (d.couleur||'');
+      const conf = data.confiance || 0;
+      const pastille = conf>=80 ? "🟢" : conf>=55 ? "🟡" : "🔴";
+
+      // Options des menus (réutilise les mêmes que le formulaire)
+      const coulOpts = ["Blond très clair","Blond","Blond foncé","Châtain clair","Châtain","Châtain foncé","Brun","Noir","Roux","Gris / Blanc","Poivre et sel"];
+      const texOpts = ["Lisse","Ondulé","Bouclé","Crépu"];
+      const optHtml = (arr,sel)=>arr.map(o=>`<option${o===sel?' selected':''}>${o}</option>`).join('');
+
+      // On garde la photo de côté pour l'envoyer au moment de la validation
+      RC_IA_FICHIER[ref] = f;
+
+      if(res) res.innerHTML =
+        `<div style="background:#fff;border-radius:8px;padding:10px;border-left:4px solid var(--corail)">
+          <div style="font-weight:700;color:var(--bleu);margin-bottom:6px">Proposition IA ${pastille} ${conf}% — vérifiez et corrigez</div>
+          <div class="rc-duo">
+            <div class="rc-champ"><label>Couleur</label><select id="ria-coul-${ref}">${optHtml(coulOpts, coul)}</select></div>
+            <div class="rc-champ"><label>Texture</label><select id="ria-tex-${ref}">${optHtml(texOpts, data.texture||'')}</select></div></div>
+          <div class="rc-duo">
+            <div class="rc-champ"><label>Longueur (cm)</label><input id="ria-long-${ref}" type="number" inputmode="numeric" value="${(data.longueur&&data.longueur>0)?data.longueur:''}" placeholder="${(data.longueur&&data.longueur>0)?'':'à mesurer'}"></div>
+            <div class="rc-champ"><label>Nuance (corrigez la vôtre)</label><input id="ria-nuance-${ref}" type="text" value="${data.nuance||''}" placeholder="ex. Châtain doré 5.3"></div></div>
+          ${data.remarque?`<div style="font-size:12px;color:#B5544B;margin:4px 0">👁 ${data.remarque}</div>`:''}
+          <button class="rc-btn rc-btn-valide" style="margin:8px 0 0" onclick="rcEnregistrerIA('${ref}')">✓ Enregistrer dans le don</button>
+        </div>`;
+    }catch(e){
+      if(res) res.innerHTML = `<span style="color:#B5544B">⚠️ Erreur réseau.</span>`;
+    }
+  };
+  input.click();
+}
+
+/* Stocke la photo prise pendant l'analyse, en attendant la validation */
+let RC_IA_FICHIER = {};
+
+/* Enregistre dans Airtable les valeurs (éventuellement corrigées) de la nuance IA */
+async function rcEnregistrerIA(ref){
+  const d = RC_DONS.find(x=>(x._recId&&x._recId===ref) || x.code===ref);
+  if(!d){ toast("Don introuvable."); return; }
+  const gv = id => { const e=document.getElementById(id); return e?e.value:''; };
+  const coul = gv('ria-coul-'+ref);
+  const tex  = gv('ria-tex-'+ref);
+  const long = +gv('ria-long-'+ref)||0;
+  const nuance = gv('ria-nuance-'+ref).trim();
+
+  // Report local
+  if(coul) d.couleur = coul;
+  if(tex) d.texture = tex;
+  if(long>0) d.longueur = long;
+  if(nuance) d.nuanceIA = nuance;
+
+  if(atActif() && d._recId){
+    const fields = {};
+    if(coul) fields[DON_FIELDS.couleur] = coul;
+    if(tex) fields[DON_FIELDS.texture] = tex;
+    if(long>0) fields[DON_FIELDS.longueur] = long;
+    if(nuance) fields[DON_FIELDS.nuanceIA] = nuance;
+    try{
+      await airtable("updateRecord", { tableId: AT_CONFIG.tables.dons, recordId: d._recId, fields });
+      const f = RC_IA_FICHIER[ref];
+      if(f){ try{ await envoyerPhotoAirtable(d._recId, f); }catch(e){} delete RC_IA_FICHIER[ref]; }
+      toast("✓ Enregistré dans le don.");
+    }catch(e){
+      toast("Enregistrement Airtable échoué.");
+      return;
+    }
+  } else {
+    toast("✓ Enregistré (mode démo).");
+  }
+  const res = document.getElementById('rc-ia-res-'+ref);
+  if(res) res.innerHTML = `<div style="background:#EAF6EF;color:#3E7D5C;border-radius:8px;padding:8px 10px;font-size:13px;font-weight:600">✓ ${d.couleur||''}${nuance?` · ${nuance}`:''}${long>0?` · ${long} cm`:''}${tex?` · ${tex}`:''} enregistré.</div>`;
+  rcRendreListe();
 }
 
 /* ======================= DÉMARRAGE : écran de connexion ======================= */
