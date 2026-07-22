@@ -24,22 +24,30 @@ const CATEGORIES = [
 const PROMPT = `Tu es l'assistant de tri des dons de cheveux de l'atelier Mon Bandô.
 On te montre la photo d'une mèche de cheveux (un don reçu).
 
-Ta tâche : déterminer la teinte de cette mèche.
+Ta tâche : déterminer teinte, longueur et texture de cette mèche.
 
-1. Choisis UNE catégorie parmi ces 8, exactement telle qu'écrite :
+1. TEINTE — Choisis UNE catégorie parmi ces 8, exactement telle qu'écrite :
 Noir, Brun foncé, Brun, Châtain, Châtain clair, Blond foncé, Blond, Roux / divers.
 
-2. Donne la nuance affinée dans le système coloriste (niveau.reflet), par ex.
-"Châtain chaud 5.3", "Blond cendré 7.1", "Noir 1.0", "Brun froid 4.1".
+2. NUANCE — Donne la nuance affinée dans le système coloriste (niveau.reflet),
+par ex. "Châtain chaud 5.3", "Blond cendré 7.1", "Noir 1.0", "Brun froid 4.1".
 
-3. Estime ta confiance de 0 à 100.
+3. LONGUEUR — Estime la longueur de la mèche en centimètres. Une règle ou un
+mètre est souvent posé à côté de la mèche : SERS-T'EN comme repère d'échelle
+pour mesurer précisément. Si aucun repère d'échelle n'est visible, renvoie 0
+pour la longueur et signale-le dans la remarque.
 
-4. Ajoute une remarque courte SI un point mérite l'œil humain (mèche
-décolorée, cheveux méchés, reflet ambigu, photo sombre…). Sinon chaîne vide.
+4. TEXTURE — Choisis UNE texture parmi : Lisse, Ondulé, Bouclé, Crépu.
+
+5. Estime ta confiance globale de 0 à 100.
+
+6. Ajoute une remarque courte SI un point mérite l'œil humain (mèche
+décolorée, méchée, reflet ambigu, pas de règle pour la longueur, photo
+sombre…). Sinon chaîne vide.
 
 Réponds UNIQUEMENT avec un objet JSON strict, sans texte autour, sans
 balises Markdown, de la forme :
-{"categorie":"...","nuance":"...","confiance":88,"remarque":"..."}`;
+{"categorie":"...","nuance":"...","longueur":32,"texture":"...","confiance":88,"remarque":"..."}`;
 
 export default async function handler(req, res) {
   // CORS — l'app et l'API sont sur le même domaine Vercel, mais on reste souple.
@@ -124,9 +132,18 @@ export default async function handler(req, res) {
       parsed.categorie = found || "";
     }
 
+    // On force la texture dans la liste connue.
+    const TEXTURES = ["Lisse", "Ondulé", "Bouclé", "Crépu"];
+    if (!TEXTURES.includes(parsed.texture)) {
+      const ft = TEXTURES.find((t) => (parsed.texture || "").toLowerCase().startsWith(t.toLowerCase().slice(0, 4)));
+      parsed.texture = ft || "";
+    }
+
     return res.status(200).json({
       categorie: parsed.categorie || "",
       nuance: parsed.nuance || "",
+      longueur: Number(parsed.longueur) || 0,
+      texture: parsed.texture || "",
       confiance: Number(parsed.confiance) || 0,
       remarque: parsed.remarque || "",
     });
