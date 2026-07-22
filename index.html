@@ -2273,6 +2273,78 @@ function ndChoisirPhotos(){
   };
   input.click();
 }
+
+/* ======================= ANALYSE IA DE LA TEINTE =======================
+   Envoie la 1re photo de la mèche au service /api/analyse-teinte (qui
+   détient la clé Anthropic côté serveur), récupère la catégorie + la
+   nuance, et pré-remplit le formulaire. Setti valide ou corrige. */
+const IA_TEINTE_URL = "https://mon-bando-app.vercel.app/api/analyse-teinte";
+
+/* Fait correspondre les 8 catégories IA aux libellés du menu Couleur. */
+function ndMapCouleur(cat){
+  const opts = Array.from(document.getElementById('nd-couleur').options).map(o=>o.value);
+  const table = {
+    "Noir":"Noir", "Brun foncé":"Châtain foncé", "Brun":"Brun",
+    "Châtain":"Châtain", "Châtain clair":"Châtain clair",
+    "Blond foncé":"Blond foncé", "Blond":"Blond", "Roux / divers":"Roux"
+  };
+  const cible = table[cat] || cat;
+  return opts.includes(cible) ? cible : null;
+}
+
+function fileVersDataURL(file){
+  return new Promise((res, rej)=>{
+    const r = new FileReader();
+    r.onload = ()=>res(r.result);
+    r.onerror = ()=>rej(new Error("lecture photo"));
+    r.readAsDataURL(file);
+  });
+}
+
+async function ndAnalyserTeinte(){
+  const res = document.getElementById('nd-ia-res');
+  const btn = document.getElementById('nd-ia-btn');
+  if(!ND_PHOTOS.length){
+    res.innerHTML = `<span style="color:var(--corail-fonce)">Ajoutez d'abord une photo de la mèche (bouton ci-dessus).</span>`;
+    return;
+  }
+  btn.disabled = true; btn.textContent = "🤖 Analyse en cours…";
+  res.innerHTML = `<span style="color:#5b7387">Envoi de la photo à l'IA…</span>`;
+  try{
+    const dataUrl = await fileVersDataURL(ND_PHOTOS[0]);
+    const r = await fetch(IA_TEINTE_URL, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ imageBase64: dataUrl })
+    });
+    const data = await r.json();
+    if(!r.ok || data.error){
+      res.innerHTML = `<span style="color:#B5544B">⚠️ Analyse indisponible${data.detail?` : ${data.detail}`:''}. Renseignez la teinte à la main.</span>`;
+      return;
+    }
+    // Pré-remplissage
+    const cible = data.categorie ? ndMapCouleur(data.categorie) : null;
+    if(cible) document.getElementById('nd-couleur').value = cible;
+    document.getElementById('nd-nuanceIA').value = data.nuance || "";
+
+    const conf = data.confiance || 0;
+    const pastille = conf>=80 ? "🟢" : conf>=55 ? "🟡" : "🔴";
+    res.innerHTML =
+      `<div style="background:#fff;border-radius:8px;padding:8px 10px;border-left:4px solid var(--corail)">
+        <div style="font-weight:700;color:var(--bleu)">Proposition IA ${pastille} ${conf}%</div>
+        <div style="font-size:12.5px;color:#5b7387;margin-top:2px">
+          Catégorie : <b>${data.categorie||'—'}</b>${cible&&cible!==data.categorie?` (menu : ${cible})`:''}<br>
+          Nuance affinée : <b>${data.nuance||'—'}</b>
+          ${data.remarque?`<br>👁 <span style="color:#B5544B">${data.remarque}</span>`:''}
+        </div>
+        <div style="font-size:12px;color:var(--corail-fonce);margin-top:6px">Vérifiez la couleur ci-dessus — corrigez si besoin avant d'enregistrer.</div>
+      </div>`;
+  }catch(e){
+    res.innerHTML = `<span style="color:#B5544B">⚠️ Erreur réseau. Renseignez la teinte à la main.</span>`;
+  }finally{
+    btn.disabled = false; btn.textContent = "🤖 Analyser la teinte à partir de la photo";
+  }
+}
 /* ---- Prochain code D- : cherche le plus grand D-XXXX existant et ajoute 1 ---- */
 function rcProchainCode(){
   let max=0;
@@ -2318,7 +2390,10 @@ function rcNouveauDon(){
       <div class="rc-champ"><label>Notes</label><input id="nd-notes" type="text" placeholder="Remarque libre"></div>
       <div class="rc-champ"><label><input id="nd-consent" type="checkbox" style="width:auto;margin-right:8px">Consentement donné</label></div>
       <div class="rc-champ"><label><input id="nd-partage" type="checkbox" style="width:auto;margin-right:8px">Partage réseaux autorisé</label></div>
-      <div class="rc-ia">🤖 Nuance affinée (IA) : à venir, proposée à partir des photos.</div></div>
+      <input type="hidden" id="nd-nuanceIA" value="">
+      <div class="rc-ia" id="nd-ia-zone">🤖 <b>Nuance affinée (IA)</b> — ajoutez une photo, puis lancez l'analyse pour proposer la teinte automatiquement.
+        <button class="rc-btn-photo" id="nd-ia-btn" style="margin-top:8px;background:var(--corail)" onclick="ndAnalyserTeinte()">🤖 Analyser la teinte à partir de la photo</button>
+        <div id="nd-ia-res" style="margin-top:8px"></div></div></div>
     <button class="rc-btn rc-btn-valide" onclick="rcCreerDon('${code}')">✓ Conforme — ranger en bac</button>
     <button class="rc-btn rc-btn-nc" onclick="rcCreerDonNC('${code}')">Non conforme</button>`;
   document.getElementById('rc-fiche').innerHTML=
@@ -2341,6 +2416,7 @@ function rcLireNouveau(code, statut){
     recuLe:auj, photos:0, videos:0,
     poids:+g('nd-poids')||0, longueur:+g('nd-long')||0,
     couleur:g('nd-couleur')||"", texture:g('nd-texture')||"",
+    nuanceIA:g('nd-nuanceIA')||"",
     nature:g('nd-nature')||"", bac:g('nd-bac')||"", notes:g('nd-notes')||"",
     consent:c('nd-consent'), partageOK:c('nd-partage')};
 }
@@ -3470,6 +3546,7 @@ function cmNouvelle(){
   document.getElementById('cm-voile').classList.add('on');
   document.getElementById('cm-fiche').scrollTop=0;
   window.NC={gamme:"Autologue", forme:"Totale", taille:"Adulte", fin:"propre-sans", longType:null, photos:{}, joint:{}};
+  NC_FICHIERS={};
   ncPhotoCheveux(); ncMaj(); ncStock();
 }
 function ncSeg(champ,val,btn){
@@ -3505,7 +3582,20 @@ function ncPhotoCheveux(){
       <button class="rc-btn-photo" style="width:auto;padding:8px 12px;margin:0" onclick="ncPhoto('cheveux')">${done?'Reprendre':'Prendre'}</button></div>
     <div class="nc-note">${note}</div></div>`;
 }
-function ncPhoto(type){ window.NC.photos[type]=true; if(type==='cheveux') ncPhotoCheveux(); toast('📷 Photo enregistrée.'); }
+let NC_FICHIERS = {}; // {visage:[File...], cheveux:[File...]}
+function ncPhoto(type){
+  const input=document.createElement('input');
+  input.type='file'; input.accept='image/*'; input.multiple=true; input.capture='environment';
+  input.onchange=()=>{
+    const fichiers=Array.from(input.files||[]);
+    if(!fichiers.length) return;
+    NC_FICHIERS[type]=fichiers;
+    window.NC.photos[type]=true;
+    if(type==='cheveux') ncPhotoCheveux();
+    toast(`📷 ${fichiers.length} photo(s) ${type} ajoutée(s).`);
+  };
+  input.click();
+}
 function ncJoindre(type){ window.NC.joint[type]=true;
   const el=document.getElementById('nc-presc-j'); if(el){ el.classList.add('done'); el.querySelector('span:nth-child(2)').textContent='Prescription jointe ✓'; }
   toast('📎 Document joint.'); }
@@ -3678,23 +3768,36 @@ const CP_TYPES=[
  {emoji:"📄", type:"Ordonnance", table:"Commandes", desc:"Prescription → pièce liée à la commande (donnée de santé, jamais sur l'écran production)."},
  {emoji:"📁", type:"Flyer / document", table:"Documents", desc:"À classer dans la bibliothèque de documents."}
 ];
+let CP_FICHIERS = [];
 function cpPhoto(){
-  // simulation de reconnaissance
-  const t=CP_TYPES[Math.floor(Math.random()*CP_TYPES.length)];
-  document.getElementById('cp-resultat').innerHTML=
-    `<div class="rc-bloc"><h3>Reconnu</h3>
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+  const input=document.createElement('input');
+  input.type='file'; input.accept='image/*'; input.capture='environment';
+  input.onchange=()=>{
+    CP_FICHIERS=Array.from(input.files||[]);
+    if(!CP_FICHIERS.length) return;
+    cpAfficherChoix();
+  };
+  input.click();
+}
+function cpAfficherChoix(){
+  const cartes = CP_TYPES.map((t,i)=>
+    `<div class="rc-bloc" style="cursor:pointer" onclick="cpCreer('${t.type}','${t.table}')">
+      <div style="display:flex;align-items:center;gap:12px">
         <div style="font-size:34px">${t.emoji}</div>
         <div><div style="font-weight:600;font-size:15px;color:var(--bleu)">${t.type}</div>
-          <div style="font-size:12.5px;color:#5b7387">${t.desc}</div></div></div></div>
-    <div class="rc-bloc"><h3>Créer la fiche dans</h3>
-      <div class="rc-ligne"><span class="lab">Table</span><span class="val">${t.table}</span></div></div>
-    <button class="rc-btn rc-btn-valide" onclick="cpCreer('${t.type}','${t.table}')">✓ Créer la fiche</button>
-    <button class="rc-btn rc-btn-nc" onclick="cpPhoto()">↻ Ce n'est pas ça — reprendre</button>`;
+          <div style="font-size:12.5px;color:#5b7387">${t.desc}</div>
+          <div style="font-size:11.5px;color:var(--corail-fonce);margin-top:3px">→ ${t.table}</div></div></div></div>`
+  ).join('');
+  document.getElementById('cp-resultat').innerHTML=
+    `<div style="font-size:13px;color:#5b7387;margin-bottom:8px">📷 Photo prise. De quel document s'agit-il ?</div>
+     ${cartes}
+     <button class="rc-btn rc-btn-nc" onclick="cpPhoto()">↻ Reprendre la photo</button>`;
 }
 function cpCreer(type,table){
   document.getElementById('cp-resultat').innerHTML='';
-  toast(`${type} enregistré dans « ${table} ».`);
+  const n=CP_FICHIERS.length;
+  CP_FICHIERS=[];
+  toast(`${type}${n?` (${n} photo)`:''} enregistré dans « ${table} ».`);
 }
 
 
