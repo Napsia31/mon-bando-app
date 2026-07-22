@@ -2021,6 +2021,10 @@ function allerA(vue){
     document.getElementById('vue-commandes').classList.add('active');
     document.getElementById('nav-commandes').classList.add('actif');
     cmRendreFiltres(); cmRendreListe();
+    // charge le stock de trames pour l'indicateur de disponibilité
+    if(atActif() && !TRAMES_STOCK.length){
+      chargerTramesAirtable().then(tr=>{ if(tr){ TRAMES_STOCK.length=0; tr.forEach(x=>TRAMES_STOCK.push(x)); } }).catch(()=>{});
+    }
   } else if(vue==='pap'){
     document.getElementById('vue-pap').classList.add('active');
     document.getElementById('nav-pap').classList.add('actif');
@@ -2479,6 +2483,7 @@ function rcEnvoyer(code){
 const TI_CHEV={"Châtain":"#6b4a33","Châtain clair":"#8a6a4a","Brun":"#3d2b1f","Blond":"#b98f5a","Blond foncé":"#a37f45","Noir":"#221a14","Roux":"#8a4b2f"};
 function tiObjectif(g){ return g? Math.round(g*0.9) : null; }
 let tiOnglet="atisser";
+let tiFiltreCouleur=null; // filtre couleur dans Trames prêtes
 
 /* Trames prêtes (tissées) : état Disponible / Réservé + médias (1 principale + 4 angles + 1 vidéo) */
 let TRAMES_STOCK = [
@@ -2499,7 +2504,8 @@ function tiFile(){ // dons à tisser
     return RC_DONS
       .filter(d=> d.statut==="Validé" && !codesTrames.has(d.code))
       .map(d=>({type:"don", _recId:d._recId, code:d.code||"(sans code)",
-        qui:"Stock — "+(d.couleur||'?'),
+        qui: ((d.prenom||'')+' '+(d.nom||'')).trim() || "Donneuse non renseignée",
+        prenom:d.prenom, nom:d.nom,
         couleur:d.couleur, cm:d.longueur, g:d.poids, texture:d.texture,
         nature:d.nature, nuanceIA:d.nuanceIA, bac:d.bac,
         medias:d.medias||[], date:d.recuLe||d._cree||""}))
@@ -2540,28 +2546,137 @@ function tiRendre(){
     }).join('');
   } else {
     const dispo=TRAMES_STOCK.filter(t=>t.etat==="Disponible").length;
-    aide.textContent=`Trames tissées. ${dispo} disponible(s) · ${TRAMES_STOCK.length-dispo} réservée(s). Une trame passe en Réservé dès qu'elle est prise (atelier, commande en ligne, téléphone, distributeur).`;
+    const reserve=TRAMES_STOCK.length-dispo;
+    aide.textContent=`${dispo} trame(s) disponible(s) · ${reserve} réservée(s). Touchez un groupe pour voir les trames et leur bac.`;
+    let groupes = tiGroupesStock();
+    // filtre par couleur
+    const couleursDispo = [...new Set(tiGroupesStock().map(g=>g.couleur))].sort();
+    let filtre='';
+    if(couleursDispo.length>1){
+      filtre = `<div style="display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;-webkit-overflow-scrolling:touch">`
+        + `<button onclick="tiFiltreCouleur=null;tiRendre()" style="flex:0 0 auto;border:none;font-family:inherit;font-size:12.5px;font-weight:600;padding:7px 14px;border-radius:100px;cursor:pointer;background:${!tiFiltreCouleur?'var(--corail)':'#fff'};color:${!tiFiltreCouleur?'#fff':'var(--bleu)'}">Toutes</button>`
+        + couleursDispo.map(c=>{
+            const actif = tiFiltreCouleur===c;
+            return `<button onclick="tiFiltreCouleur='${c.replace(/'/g,"\\'")}';tiRendre()" style="flex:0 0 auto;border:none;font-family:inherit;font-size:12.5px;font-weight:600;padding:7px 12px;border-radius:100px;cursor:pointer;background:${actif?'var(--corail)':'#fff'};color:${actif?'#fff':'var(--bleu)'};display:flex;align-items:center;gap:6px">
+              <span style="width:11px;height:11px;border-radius:50%;background:${TI_CHEV[c]||'#6b4a33'};display:inline-block"></span>${c}</button>`;
+          }).join('')
+        + `</div>`;
+    }
+    if(tiFiltreCouleur) groupes = groupes.filter(g=>g.couleur===tiFiltreCouleur);
+    // sépare : prêt à monter / en constitution
+    const pret = groupes.filter(g=>tiCouronnePossible(g.g));
+    const encours = groupes.filter(g=>!tiCouronnePossible(g.g));
+    const carteGroupe = (gr)=>{
+      const gi = tiGroupesStock().findIndex(g=>g.ref===gr.ref);
+      const longueur = gr.cmMin===gr.cmMax ? `${gr.cmMin} cm` : `${gr.cmMin}–${gr.cmMax} cm`;
+      const bacs=[...new Set(gr.trames.map(t=>t.bac).filter(Boolean))];
+      const possible = tiCouronnePossible(gr.g);
+      const prochain = TI_SEUILS.find(([f,s])=> gr.g < s);
+      // toutes les formes : cochées si atteintes
+      const formes = TI_SEUILS.map(([f,s])=>{
+        const ok = gr.g >= s;
+        return `<span style="font-size:12px;font-weight:700;padding:4px 10px;border-radius:100px;background:${ok?'#E7F3EC':'var(--nude)'};color:${ok?'#3E7D5C':'#9aa8b4'}">${ok?'✓':'○'} ${f}</span>`;
+      }).join(' ');
+      const barre = prochain ? Math.min(100, Math.round((gr.g/prochain[1])*100)) : 100;
+      const manque = (!possible && prochain)
+        ? `<div style="font-size:12px;color:var(--bleu-70);margin-top:6px">Encore <b style="color:var(--bleu)">${prochain[1]-gr.g} g</b> pour une ${prochain[0]}</div>`
+        : (prochain ? `<div style="font-size:11.5px;color:var(--bleu-70);margin-top:6px">Encore ${prochain[1]-gr.g} g pour une ${prochain[0]}</div>` : '');
+      return `<div onclick="tiOuvrirGroupe(${gi})" style="background:#fff;border-radius:16px;box-shadow:var(--ombre);padding:14px;margin-bottom:10px;border-left:5px solid ${possible?'#3E7D5C':'var(--corail)'};cursor:pointer">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:52px;height:52px;border-radius:12px;background:linear-gradient(160deg, ${TI_CHEV[gr.couleur]||'#6b4a33'} 0%, #2e1f14 100%);flex:0 0 auto"></div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:15px;font-weight:700;color:var(--bleu)">${gr.couleur} · ${longueur}</div>
+            <div style="font-size:12.5px;color:var(--bleu-70);margin-top:1px">${gr.texture}${tiNomLongueur(Math.round((gr.cmMin+gr.cmMax)/2))?' · '+tiNomLongueur(Math.round((gr.cmMin+gr.cmMax)/2)):''}${gr.nuance?' · '+gr.nuance:''}</div>
+            <div style="font-size:12.5px;color:var(--bleu-70);margin-top:2px">${gr.trames.length} trame(s) · <b style="color:var(--bleu);font-size:14px">${gr.g} g</b>${bacs.length?' · 📍 '+bacs.join(', '):''}</div>
+          </div>
+          <div style="font-size:20px;color:var(--bleu-70);flex:0 0 auto">›</div>
+        </div>
+        <div style="height:7px;background:var(--nude);border-radius:100px;margin:9px 0 8px;overflow:hidden">
+          <div style="height:100%;width:${barre}%;background:${possible?'#3E7D5C':'var(--corail)'};border-radius:100px"></div></div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap">${formes}</div>
+        ${manque}
+      </div>`;
+    };
+    let contenu = filtre;
+    if(pret.length){
+      contenu += `<div style="font-size:12px;font-weight:700;color:#3E7D5C;margin:2px 0 8px">🟢 PRÊT À MONTER (${pret.length})</div>`;
+      contenu += pret.map(carteGroupe).join('');
+    }
+    if(encours.length){
+      contenu += `<div style="font-size:12px;font-weight:700;color:var(--bleu);margin:${pret.length?'18px':'2px'} 0 8px">EN CONSTITUTION (${encours.length})</div>`;
+      contenu += encours.map(carteGroupe).join('');
+    }
+    if(!pret.length && !encours.length){
+      contenu += `<div style="text-align:center;color:#5b7387;padding:24px 10px;font-size:14px">${tiFiltreCouleur?'Aucun groupe dans cette couleur.':'Aucune trame disponible en stock.'}</div>`;
+    }
+    // réservées, en second plan
+    const reservees = TRAMES_STOCK.filter(t=>t.etat!=="Disponible" && (!tiFiltreCouleur || t.couleur===tiFiltreCouleur));
+    if(reservees.length){
+      contenu += `<div style="font-size:12px;font-weight:700;color:var(--bleu);margin:18px 0 8px">🔒 RÉSERVÉES (${reservees.length})</div>`;
+      contenu += reservees.map(t=>{
+        const idx=TRAMES_STOCK.indexOf(t);
+        const donneuse = tiDonneuseDeTrame(t);
+        return `<div class="ti-carte" onclick="tiOuvrirTrame(${idx})" style="opacity:.75">
+          <div class="ti-vign" style="background:linear-gradient(160deg, ${TI_CHEV[t.couleur]||'#6b4a33'} 0%, #2e1f14 100%)"></div>
+          <div class="ti-txt"><div class="ti-rang">${t.code}</div>
+            <div class="ti-nom">${t.couleur} · ${t.cm} cm</div>
+            <div class="ti-meta">${t.g} g${t.bac?' · 📍 '+t.bac:''}${donneuse?' · '+donneuse:''}${t.motif?'<br>'+t.motif:''}</div></div>
+          <div class="ti-etat ti-e-reserve">🔒 Réservé</div></div>`;
+      }).join('');
+    }
     if(!TRAMES_STOCK.length){ z.innerHTML='<div style="text-align:center;color:#5b7387;padding:30px;font-size:14px">Aucune trame prête.</div>'; }
-    else z.innerHTML=TRAMES_STOCK.slice().sort((a,b)=> new Date(b.date)-new Date(a.date)).map(t=>{
-      const grad=`linear-gradient(160deg, ${TI_CHEV[t.couleur]||'#6b4a33'} 0%, #2e1f14 100%)`;
-      const badge = t.etat==="Disponible"
-        ? '<div class="ti-etat ti-e-dispo">🟢 Disponible</div>'
-        : '<div class="ti-etat ti-e-reserve">🔒 Réservé</div>';
-      const idx=TRAMES_STOCK.indexOf(t);
-      const vign = (t.medias && t.medias.length)
-        ? `<div class="ti-vign" style="background-image:url('${t.medias[0].vignette}');background-size:cover;background-position:center"></div>`
-        : `<div class="ti-vign" style="background:${grad}"></div>`;
-      return `<div class="ti-carte" onclick="tiOuvrirTrame(${idx})">
-        ${vign}
-        <div class="ti-txt"><div class="ti-rang">${t.code}</div>
-          <div class="ti-nom">${t.couleur} · ${t.cm} cm</div>
-          <div class="ti-meta">${t.g} g${t.bac?' · 📍 '+t.bac:''} · 📷 ${t.photos}${t.videos?' · 🎬 '+t.videos:''}${t.etat==='Réservé'&&t.motif?'<br>'+t.motif:''}</div></div>
-        ${badge}</div>`;
-    }).join('');
+    else z.innerHTML = contenu;
     // barre : lien vers les disponibles (diffusable dans l'app)
     const diff=TRAMES_STOCK.filter(t=>t.etat==="Disponible" && t.diffuser).length;
     barre.innerHTML=`<button class="ti-dispo-btn" onclick="tiDisponibles()">🌐 Diffusion Naturelle sur le site web (${diff})</button>`;
   }
+}
+/* Fiche d'un groupe : les trames à aller chercher dans les bacs */
+function tiOuvrirGroupe(gi){
+  const groupes = tiGroupesStock();
+  const gr = groupes[gi]; if(!gr) return;
+  const forme = tiCouronnePossible(gr.g);
+  const longueur = gr.cmMin===gr.cmMax ? `${gr.cmMin} cm` : `${gr.cmMin}–${gr.cmMax} cm`;
+  const prochain = TI_SEUILS.find(([f,s])=> gr.g < s);
+  const L=(l,v)=>`<div class="rc-ligne"><span class="lab">${l}</span><span class="val">${v}</span></div>`;
+  // regroupe les trames par bac, pour la tournée dans l'atelier
+  const parBac={};
+  gr.trames.forEach(t=>{ const b=t.bac||'Bac non renseigné'; (parBac[b]=parBac[b]||[]).push(t); });
+  let listeTrames='';
+  Object.keys(parBac).sort().forEach(bac=>{
+    listeTrames += `<div style="font-size:12.5px;font-weight:700;color:var(--corail);margin:10px 0 5px">📍 ${bac}</div>`;
+    listeTrames += parBac[bac].map(t=>{
+      const idx=TRAMES_STOCK.indexOf(t);
+      const donneuse=tiDonneuseDeTrame(t);
+      const vign = (t.medias && t.medias.length)
+        ? `<div style="width:42px;height:42px;border-radius:10px;background-image:url('${t.medias[0].vignette}');background-size:cover;background-position:center;flex:0 0 auto"></div>`
+        : `<div style="width:42px;height:42px;border-radius:10px;background:linear-gradient(160deg, ${TI_CHEV[t.couleur]||'#6b4a33'} 0%, #2e1f14 100%);flex:0 0 auto"></div>`;
+      return `<div onclick="tiOuvrirTrame(${idx})" style="display:flex;align-items:center;gap:10px;background:#fff;border-radius:12px;padding:9px 11px;margin-bottom:6px;cursor:pointer">
+        ${vign}
+        <div style="flex:1;min-width:0">
+          <div style="font-size:14px;font-weight:700;color:var(--bleu)">${t.code}</div>
+          <div style="font-size:12px;color:var(--bleu-70)">${t.cm} cm · <b style="color:var(--bleu)">${t.g} g</b>${donneuse?' · '+donneuse:''}</div>
+        </div>
+        <div style="font-size:18px;color:var(--bleu-70)">›</div></div>`;
+    }).join('');
+  });
+  const etat = forme
+    ? `<div class="rc-ia" style="background:#E7F3EC;color:#2f6b4f;font-size:14px">🟢 Vous pouvez monter une couronne <b>${forme}</b> avec ce groupe.</div>`
+    : `<div class="rc-ia">Encore <b>${prochain[1]-gr.g} g</b> pour une couronne ${prochain[0]}.</div>`;
+  const corps=`<div class="rc-bloc"><h3>Groupe assortissable</h3>
+      <div style="height:90px;border-radius:12px;background:linear-gradient(160deg, ${TI_CHEV[gr.couleur]||'#6b4a33'} 0%, #2e1f14 100%);margin-bottom:10px"></div>
+      ${L("Couleur", gr.couleur)}${L("Texture", gr.texture)}${L("Longueurs", longueur)}${gr.nuance?L("Nuance", gr.nuance):''}
+      ${L("Total", `<b>${gr.g} g</b> · ${gr.trames.length} trame(s)`)}
+      ${etat}</div>
+    <div class="rc-bloc"><h3>Trames à récupérer</h3>
+      <div style="font-size:12px;color:var(--bleu-70);margin-bottom:2px">Rangées par bac. Touchez une trame pour sa fiche.</div>
+      ${listeTrames}</div>`;
+  document.getElementById('ti-fiche').innerHTML=
+    `<div class="rc-tete"><div><div class="t">${gr.couleur} · ${longueur}</div><div class="f">${gr.g} g · ${gr.trames.length} trame(s)</div></div>
+      <button class="rc-fermer" onclick="tiFermer()">×</button></div>${corps}`;
+  document.getElementById('ti-fiche').classList.add('on');
+  document.getElementById('ti-voile').classList.add('on');
+  document.getElementById('ti-fiche').scrollTop=0;
 }
 function tiOuvrir(i){
   const file=tiFile(); const x=file[i]; if(!x) return;
@@ -2573,14 +2688,50 @@ function tiOuvrir(i){
     ? `<div class="rc-medias" style="margin-bottom:10px">${x.medias.map(m=>`<div class="rc-media" onclick="rcVoirPhoto('${m.url}')"><img src="${m.vignette}" alt=""><div class="tag">don</div></div>`).join('')}</div>`
     : `<div style="height:120px;border-radius:12px;background:${grad};margin-bottom:10px"></div>`;
   const codeProchain = tiProchainCode();
+  // --- aide au tissage : stock compatible, dons similaires, ancienneté ---
+  const grp = tiGroupeStock(x);
+  const sim = tiDonsSimilaires(x);
+  const jours = tiJoursDepuis(x.date);
+  const apport = obj || 0;
+  const futur = grp.g + apport;
+  const couronneAvant = tiCouronnePossible(grp.g);
+  const couronneApres = tiCouronnePossible(futur);
+  let blocStock = `<div class="rc-bloc"><h3>Stock assortissable (${x.couleur||'?'} · ${x.texture||'?'} · ~${x.cm||'?'} cm)</h3>`;
+  if(grp.nb){
+    blocStock += `<div class="rc-ligne"><span class="lab">Déjà en stock</span><span class="val">${grp.nb} trame(s) · ${grp.g} g</span></div>`;
+    blocStock += grp.trames.slice(0,4).map(t=>`<div style="font-size:11.5px;color:#5b7387;padding:2px 0">• ${t.code} — ${t.cm} cm · ${t.g} g</div>`).join('');
+    if(apport) blocStock += `<div class="rc-ligne"><span class="lab">Avec cette trame</span><span class="val">≈ ${futur} g</span></div>`;
+  } else {
+    blocStock += `<div style="font-size:12.5px;color:#5b7387;margin-bottom:6px">Aucune trame compatible en stock — cette trame ouvrira un nouveau groupe.</div>`;
+    if(apport) blocStock += `<div class="rc-ligne"><span class="lab">Avec cette trame</span><span class="val">≈ ${futur} g</span></div>`;
+  }
+  if(couronneApres && couronneApres!==couronneAvant){
+    blocStock += `<div class="rc-ia" style="background:#E7F3EC;color:#2f6b4f">🟢 Après ce tissage : couronne <b>${couronneApres}</b> possible (seuil atteint).</div>`;
+  } else if(couronneApres){
+    blocStock += `<div class="rc-ia">Couronne ${couronneApres} déjà possible avec ce groupe.</div>`;
+  } else {
+    const prochain = TI_SEUILS.find(([f,s])=> futur < s);
+    if(prochain) blocStock += `<div class="rc-ia">Encore ≈ ${prochain[1]-futur} g pour une couronne ${prochain[0]}.</div>`;
+  }
+  if(sim.length){
+    blocStock += `<div style="margin-top:8px;font-size:12.5px;color:var(--bleu);font-weight:600">Dons similaires à tisser (${sim.length})</div>`;
+    blocStock += sim.slice(0,4).map(d=>`<div style="font-size:12px;color:#5b7387;padding:3px 0">• ${d.code} — ${d.qui} · ${d.cm||'?'} cm · ${d.g||'?'} g</div>`).join('');
+    blocStock += `<div style="font-size:11.5px;color:var(--bleu-70);margin-top:4px">Les tisser à la suite constitue un lot homogène.</div>`;
+  }
+  blocStock += `</div>`;
+  const blocAge = (jours!==null)
+    ? `<div class="rc-ia" style="margin-bottom:10px">⏳ Don reçu il y a <b>${jours} jour${jours>1?'s':''}</b>.</div>` : '';
   const corps=`<div class="rc-bloc"><h3>Don du stock à tisser</h3>
       ${visuel}
-      ${L("Code", x.code)}${L("Origine", x.qui)}${L("Couleur", x.couleur||'—')}
+      ${blocAge}
+      ${L("Code", x.code)}${L("Donneuse", x.qui)}${L("Couleur", x.couleur||'—')}
       ${L("Longueur", (x.cm||'?')+' cm')}${L("Poids reçu", (x.g||'?')+' g')}${x.texture?L("Texture", x.texture):''}${x.nature?L("Nature", x.nature):''}</div>
     <div class="rc-bloc"><h3>Nuance</h3><div class="rc-ia">🤖 ${x.nuanceIA||'—'}</div></div>
+    ${blocStock}
     <div class="rc-bloc"><h3>Après tissage — je saisis</h3>
       <div class="rc-champ"><label>Poids de la trame obtenue (g)${obj?` — attendu ≈ ${obj} g`:''}</label>
-        <input id="ti-poids" type="number" inputmode="numeric" placeholder="${obj||'ex. 14'}"></div>
+        <input id="ti-poids" type="number" inputmode="numeric" placeholder="${obj||'ex. 14'}" oninput="tiVerifPoids(${x.g||0})">
+        <div id="ti-alerte-poids" style="font-size:12px;margin-top:5px"></div></div>
       <div class="rc-champ"><label>Longueur de la trame (cm)</label>
         <input id="ti-long" type="number" inputmode="numeric" placeholder="${x.cm||'ex. 35'}" value="${x.cm||''}"></div>
       <div class="rc-champ"><label>Bac de rangement</label><input id="ti-bac" type="text" placeholder="ex. B3" value="${x.bac||''}"></div>
@@ -2600,6 +2751,23 @@ function tiOuvrir(i){
   document.getElementById('ti-fiche').scrollTop=0;
 }
 function tiFermer(){ document.getElementById('ti-fiche').classList.remove('on'); document.getElementById('ti-voile').classList.remove('on'); }
+/* Alerte si le poids obtenu s'écarte beaucoup de l'attendu */
+function tiVerifPoids(poidsRecu){
+  const z=document.getElementById('ti-alerte-poids'); if(!z) return;
+  const saisi=parseFloat((document.getElementById('ti-poids')||{}).value);
+  if(!saisi || !poidsRecu){ z.textContent=''; return; }
+  const attendu = Math.round(poidsRecu*0.9);
+  const ecart = Math.round(((saisi-attendu)/attendu)*100);
+  if(saisi > poidsRecu){
+    z.innerHTML = `<span style="color:#B45309">⚠️ Poids supérieur au don reçu (${poidsRecu} g) — vérifiez la saisie.</span>`;
+  } else if(ecart <= -25){
+    z.innerHTML = `<span style="color:#B45309">⚠️ ${Math.abs(ecart)} % de moins qu'attendu (≈ ${attendu} g) — perte importante, à vérifier.</span>`;
+  } else if(ecart <= -15){
+    z.innerHTML = `<span style="color:#8a6d3b">Un peu en dessous de l'attendu (≈ ${attendu} g).</span>`;
+  } else {
+    z.innerHTML = `<span style="color:#3E7D5C">✓ Cohérent avec l'attendu.</span>`;
+  }
+}
 /* Photos choisies pour la trame en cours de création */
 let TI_PHOTOS = [];
 function tiChoisirPhotosTrame(){
@@ -2624,6 +2792,7 @@ async function tiTrameCreee(refDon){
   const cm    = parseFloat(g('ti-long'))  || (d ? (d.longueur||d.cm||35) : 35);
   const bac   = g('ti-bac') || (d?d.bac:'') || '';
   const trame = {code:nouveau, don:(d?d.code:''), couleur:(d?d.couleur:'')||'', cm, g:poids, bac,
+    donneuse: d ? (((d.prenom||'')+' '+(d.nom||'')).trim()) : '',
     texture:(d?d.texture:'')||'', nature:(d?d.nature:'')||'',
     nuanceIA:(d?d.nuanceIA:'')||'', etat:"Disponible",
     destination:g('ti-dest')||'Indifférent', notes:g('ti-notes')||'',
@@ -2676,7 +2845,7 @@ function tiOuvrirTrame(idx){
     : `<div style="height:120px;border-radius:12px;background:${grad};margin-bottom:10px"></div>`;
   let corps=`<div class="rc-bloc"><h3>Trame ${badge}</h3>
       ${visuel}
-      ${L("Code", t.code)}${L("Issue du don", t.don||'—')}${L("Couleur", t.couleur||'—')}
+      ${L("Code", t.code)}${L("Issue du don", t.don||'—')}${tiDonneuseDeTrame(t)?L("Donneuse", tiDonneuseDeTrame(t)):''}${L("Couleur", t.couleur||'—')}
       ${L("Longueur", (t.cm||'?')+' cm')}${L("Poids", (t.g||'?')+' g')}${t.bac?L("Bac", '📍 '+t.bac):''}${t.texture?L("Texture", t.texture):''}${t.nature?L("Nature", t.nature):''}${t.destination?L("Destination", t.destination):''}${t.notes?L("Notes", t.notes):''}</div>
     <div class="rc-bloc"><h3>Nuance</h3><div class="rc-ia">🤖 ${t.nuanceIA||'—'}</div></div>
     <div class="rc-bloc"><h3>Photos de la trame</h3>${medias}</div>`;
@@ -3139,6 +3308,80 @@ function cmCreerBonFab(c){
   return code;
 }
 /* ---- Nouvelle commande : formulaire fidèle à votre saisie ---- */
+/* Choix Carré / Mi-long / Long */
+function ncLongType(val, btn){
+  window.NC.longType = (window.NC.longType===val) ? null : val;
+  const seg=btn.parentNode;
+  seg.querySelectorAll('button').forEach(b=>b.classList.remove('sel'));
+  if(window.NC.longType) btn.classList.add('sel');
+  ncStock();
+}
+/* Indicateur de stock + propositions de trames dans la prise de commande.
+   Ne concerne que Mixte et Naturelle (l'Autologue utilise les cheveux de la cliente). */
+function ncStock(){
+  const z=document.getElementById('nc-stock-info'); if(!z) return;
+  const gamme = (window.NC && window.NC.gamme) ? window.NC.gamme : 'Autologue';
+  if(gamme==='Autologue'){
+    z.innerHTML = `<div style="background:var(--nude);border-radius:12px;padding:10px 12px;font-size:12px;color:var(--bleu-70);margin-bottom:10px">
+      Couronne autologue : fabriquée avec les cheveux de la cliente — le stock n'est pas sollicité.</div>`;
+    return;
+  }
+  const coulSaisie = ((document.getElementById('nc-couleur')||{}).value||'').trim();
+  const longSaisie = parseFloat(((document.getElementById('nc-long')||{}).value||'').replace(',','.'));
+  const longType = window.NC ? window.NC.longType : null;
+  if(!coulSaisie && !longType && isNaN(longSaisie)){ z.innerHTML=''; return; }
+
+  let groupes = tiGroupesStock();
+  // filtre couleur (approchant)
+  if(coulSaisie){
+    const cible = coulSaisie.toLowerCase();
+    groupes = groupes.filter(g=> (g.couleur||'').toLowerCase().includes(cible) || cible.includes((g.couleur||'').toLowerCase()));
+  }
+  // filtre longueur : cm précis prioritaire, sinon le type (Carré / Mi-long / Long)
+  if(!isNaN(longSaisie)){
+    groupes = groupes.filter(g=> longSaisie >= g.cmMin-TI_TOLERANCE_CM && longSaisie <= g.cmMax+TI_TOLERANCE_CM);
+  } else if(longType){
+    const r = TI_LONGUEURS.find(l=>l.nom===longType);
+    if(r) groupes = groupes.filter(g=> g.cmMax >= r.min && g.cmMin < r.max);
+  }
+  const critere = [coulSaisie, longType, (!isNaN(longSaisie)?longSaisie+' cm':'')].filter(Boolean).join(' · ');
+  if(!groupes.length){
+    z.innerHTML = `<div style="background:#FDF3E7;border-left:4px solid #E09B78;border-radius:12px;padding:11px 13px;font-size:12.5px;color:var(--bleu);margin-bottom:10px">
+      ⚠️ <b>Aucune trame disponible</b>${critere?' pour '+critere:''}.<br>
+      <span style="color:var(--bleu-70)">Il faudra attendre des dons — prévoyez un délai avec la cliente.</span></div>`;
+    return;
+  }
+  const forme = (window.NC && window.NC.forme) ? window.NC.forme : null;
+  const seuilForme = forme ? (TI_SEUILS.find(([f])=>f===forme)||[])[1] : null;
+  // propositions : les groupes triés, le meilleur en premier
+  const cartes = groupes.slice(0,4).map(g=>{
+    const l = g.cmMin===g.cmMax ? `${g.cmMin} cm` : `${g.cmMin}–${g.cmMax} cm`;
+    const nomL = tiNomLongueur(Math.round((g.cmMin+g.cmMax)/2));
+    const suffit = seuilForme ? g.g >= seuilForme : null;
+    const marque = suffit===null ? ''
+      : suffit ? `<span style="background:#E7F3EC;color:#3E7D5C;font-size:11px;font-weight:700;padding:2px 8px;border-radius:100px;white-space:nowrap">✓ suffit</span>`
+               : `<span style="background:var(--nude);color:#B45309;font-size:11px;font-weight:700;padding:2px 8px;border-radius:100px;white-space:nowrap">−${seuilForme-g.g} g</span>`;
+    const bacs=[...new Set(g.trames.map(t=>t.bac).filter(Boolean))];
+    return `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--nude)">
+      <div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(160deg, ${TI_CHEV[g.couleur]||'#6b4a33'} 0%, #2e1f14 100%);flex:0 0 auto"></div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;color:var(--bleu)">${g.couleur} · ${l}${nomL?' ('+nomL+')':''}</div>
+        <div style="font-size:11.5px;color:var(--bleu-70)">${g.texture} · ${g.trames.length} trame(s) · <b style="color:var(--bleu)">${g.g} g</b>${bacs.length?' · 📍 '+bacs.join(', '):''}</div>
+      </div>${marque}</div>`;
+  }).join('');
+  const total = groupes.reduce((s,g)=>s+g.g,0);
+  const meilleur = Math.max(...groupes.map(g=>g.g));
+  let verdict='';
+  if(seuilForme){
+    verdict = meilleur >= seuilForme
+      ? `<div style="font-size:12.5px;color:#3E7D5C;font-weight:700;margin-top:7px">🟢 Stock suffisant pour une couronne ${forme} (${seuilForme} g requis).</div>`
+      : `<div style="font-size:12.5px;color:#B45309;font-weight:700;margin-top:7px">⚠️ Il manque ${seuilForme-meilleur} g pour une couronne ${forme} (${seuilForme} g requis).</div>`;
+  }
+  z.innerHTML = `<div style="background:#fff;border-left:4px solid ${(seuilForme&&meilleur>=seuilForme)?'#3E7D5C':'var(--corail)'};border-radius:12px;padding:11px 13px;margin-bottom:10px;box-shadow:var(--ombre)">
+    <div style="font-size:12.5px;font-weight:700;color:var(--bleu)">Trames disponibles${critere?' — '+critere:''}</div>
+    <div style="font-size:11.5px;color:var(--bleu-70);margin-bottom:3px">${groupes.length} groupe(s) · ${total} g au total</div>
+    ${cartes}${verdict}</div>`;
+}
 function cmNouvelle(){
   const gammeOpts=Object.keys(CM_TARIFS).map(g=>`<option>${g}</option>`).join('');
   const canalOpts=["Téléphone","Visite atelier","Site","Distributeur","Coiffeur partenaire","Prescripteur"].map(x=>`<option>${x}</option>`).join('');
@@ -3178,8 +3421,14 @@ function cmNouvelle(){
         <button class="sel" onclick="ncSeg('taille','Adulte',this)">Adulte</button>
         <button onclick="ncSeg('taille','Adolescent',this)">Adolescent</button>
         <button onclick="ncSeg('taille','Enfant',this)">Enfant</button></div></div>
-    <div class="rc-duo"><div class="rc-champ"><label>Longueur cheveux</label><input id="nc-long" type="text" placeholder="ex. 25 cm"></div>
-      <div class="rc-champ"><label>Couleur / teinte</label><input id="nc-couleur" type="text" placeholder="ex. Châtain"></div></div>
+    <div class="rc-champ"><label>Longueur souhaitée</label>
+      <div class="nc-seg" id="nc-longtype-seg">
+        <button onclick="ncLongType('Carré',this)">Carré<br><span style="font-size:10px;opacity:.75">15–25 cm</span></button>
+        <button onclick="ncLongType('Mi-long',this)">Mi-long<br><span style="font-size:10px;opacity:.75">25–35 cm</span></button>
+        <button onclick="ncLongType('Long',this)">Long<br><span style="font-size:10px;opacity:.75">35 cm +</span></button></div></div>
+    <div class="rc-duo"><div class="rc-champ"><label>Longueur précise (cm)</label><input id="nc-long" type="text" placeholder="ex. 30" oninput="ncStock()"></div>
+      <div class="rc-champ"><label>Couleur / teinte</label><input id="nc-couleur" type="text" placeholder="ex. Châtain" oninput="ncStock()"></div></div>
+    <div id="nc-stock-info"></div>
     <div class="rc-duo"><div class="rc-champ"><label>Tour de tête (cm)</label><input id="nc-tour" type="number" inputmode="numeric" placeholder="ex. 56"></div>
       <div class="rc-champ"><label>Poids visé (g)</label><input id="nc-poids" type="text" placeholder="ex. 50"></div></div>
     <div class="rc-champ"><label>N° lot(s) cheveux utilisés</label><input id="nc-lots" type="text" placeholder="T-… (rempli en fabrication)"></div>
@@ -3220,14 +3469,14 @@ function cmNouvelle(){
   document.getElementById('cm-fiche').classList.add('on');
   document.getElementById('cm-voile').classList.add('on');
   document.getElementById('cm-fiche').scrollTop=0;
-  window.NC={gamme:"Autologue", forme:"Totale", taille:"Adulte", fin:"propre-sans", photos:{}, joint:{}};
-  ncPhotoCheveux(); ncMaj();
+  window.NC={gamme:"Autologue", forme:"Totale", taille:"Adulte", fin:"propre-sans", longType:null, photos:{}, joint:{}};
+  ncPhotoCheveux(); ncMaj(); ncStock();
 }
 function ncSeg(champ,val,btn){
   window.NC[champ]=val;
   const seg=btn.parentNode; seg.querySelectorAll('button').forEach(b=>b.classList.remove('sel')); btn.classList.add('sel');
-  if(champ==='gamme'){ ncPhotoCheveux(); ncMaj(); }
-  if(champ==='forme'){ ncMaj(); }
+  if(champ==='gamme'){ ncPhotoCheveux(); ncMaj(); ncStock(); }
+  if(champ==='forme'){ ncMaj(); ncStock(); }
 }
 function ncFin(val,el){
   window.NC.fin=val;
@@ -4295,10 +4544,88 @@ const TRAME_FIELDS = {
   destination:"fldVqoCQsPz38b6Pt",
   photo:     "fldfYZzTyKOMqyBcr",
   notes:     "fldp584e0ngZ7Q2IS",
-  nuanceIA:  "fldZ2hVO4qRzlvO37"
+  nuanceIA:  "fldZ2hVO4qRzlvO37",
+  bac:       "fldnrw2uDRokwzH4x"  // Localisation (bac)
 };
 const TRAME_STATUTS = { stock:"En stock", reservee:"Réservée", utilisee:"Utilisée" };
 
+/* --- Analyse du stock pour aider au tissage --- */
+/* Seuils matière d'une couronne (barème Mon Bandô) */
+const TI_SEUILS = [["Frange",20],["Nuque",25],["Totale",55]];
+const TI_TOLERANCE_CM = 3; // deux trames s'assortissent si ≤ 3 cm d'écart
+/* Repères de longueur utilisés avec les clientes */
+const TI_LONGUEURS = [
+  {nom:"Carré",   min:15, max:25},
+  {nom:"Mi-long", min:25, max:35},
+  {nom:"Long",    min:35, max:999}
+];
+function tiNomLongueur(cm){
+  const n=+cm||0;
+  const r=TI_LONGUEURS.find(l=> n>=l.min && n<l.max);
+  return r ? r.nom : (n>=35?"Long":"");
+}
+/* Deux mèches sont assortissables : même couleur, même texture, longueur proche.
+   La nuance affinée (IA) affine encore le groupe DÈS QU'ELLE EST RENSEIGNÉE. */
+function tiCompatible(a,b){
+  if(!a || !b) return false;
+  if((a.couleur||'') !== (b.couleur||'')) return false;
+  if((a.texture||'') !== (b.texture||'')) return false;
+  // si les deux ont une nuance affinée, elle doit correspondre
+  const na=(a.nuanceIA||'').trim(), nb=(b.nuanceIA||'').trim();
+  if(na && nb && na!==nb) return false;
+  const la=+a.cm||0, lb=+b.cm||0;
+  return Math.abs(la-lb) <= TI_TOLERANCE_CM;
+}
+/* Trames en stock compatibles avec un don (même couleur, longueur proche) */
+function tiGroupeStock(x){
+  const compat = TRAMES_STOCK.filter(t=> t.etat==="Disponible" && tiCompatible(t,x));
+  const g = compat.reduce((s,t)=> s + (+t.g||0), 0);
+  return {trames:compat, nb:compat.length, g};
+}
+/* Dons en attente de tissage similaires (hors celui en cours) */
+function tiDonsSimilaires(x){
+  return tiFile().filter(d=> d.code!==x.code && tiCompatible(d,x));
+}
+/* Quelle couronne devient possible avec un poids donné */
+function tiCouronnePossible(g){
+  let meilleure=null;
+  TI_SEUILS.forEach(([forme,seuil])=>{ if(g>=seuil) meilleure=forme; });
+  return meilleure;
+}
+/* Nombre de jours depuis une date */
+function tiJoursDepuis(d){
+  if(!d) return null;
+  const t=new Date(d); if(isNaN(t)) return null;
+  return Math.floor((Date.now()-t.getTime())/86400000);
+}
+/* Groupes de trames assortissables : couleur + texture + longueur proche (+ nuance si connue) */
+function tiGroupesStock(){
+  const dispo = TRAMES_STOCK.filter(t=>t.etat==="Disponible");
+  const groupes = [];
+  dispo.forEach(t=>{
+    // cherche un groupe existant compatible
+    let g = groupes.find(gr => tiCompatible(gr.ref, t));
+    if(!g){
+      g = {ref:t, couleur:t.couleur||'—', texture:t.texture||'—', nuance:t.nuanceIA||'',
+           cmMin:+t.cm||0, cmMax:+t.cm||0, trames:[], g:0};
+      groupes.push(g);
+    }
+    g.trames.push(t);
+    g.g += (+t.g||0);
+    g.cmMin = Math.min(g.cmMin, +t.cm||0);
+    g.cmMax = Math.max(g.cmMax, +t.cm||0);
+    if(!g.nuance && t.nuanceIA) g.nuance = t.nuanceIA;
+  });
+  return groupes.sort((a,b)=> b.g-a.g);
+}
+/* Retrouve le nom de la donneuse d'une trame, via son don source */
+function tiDonneuseDeTrame(t){
+  if(!t) return '';
+  if(t.donneuse) return t.donneuse;
+  const d = RC_DONS.find(x=>x.code && t.don && x.code===t.don);
+  if(d) return ((d.prenom||'')+' '+(d.nom||'')).trim();
+  return '';
+}
 /* Lecture des trames depuis Airtable */
 async function chargerTramesAirtable(){
   if(!atActif()) return null;
@@ -4317,7 +4644,7 @@ async function chargerTramesAirtable(){
       texture: f["Matière / texture"]||"",
       nature:  f["Nature"]||"",
       nuanceIA:f["Nuance affinée (IA)"]||"",
-      bac:     "",
+      bac:     f["Localisation (bac)"]||"",
       etat:    st==="Réservée" ? "Réservé" : st==="Utilisée" ? "Utilisée" : "Disponible",
       destination: f["Destination"]||"",
       notes:   f["Notes"]||"",
@@ -4350,6 +4677,7 @@ async function creerTrameAirtable(t, recIdDon){
   if(t.texture) fields[TRAME_FIELDS.texture]  = t.texture;
   if(t.nature)  fields[TRAME_FIELDS.nature]   = t.nature;
   if(t.notes)   fields[TRAME_FIELDS.notes]    = t.notes;
+  if(t.bac)     fields[TRAME_FIELDS.bac]      = t.bac;
   if(t.destination) fields[TRAME_FIELDS.destination] = t.destination;
   if(recIdDon)  fields[TRAME_FIELDS.donSource] = [recIdDon]; // lien vers le don
   return airtable("createRecord", { tableId: AT_CONFIG.tables.trames, fields });
