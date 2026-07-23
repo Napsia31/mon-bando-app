@@ -2313,15 +2313,17 @@ async function ndAnalyserTeinte(){
   btn.disabled = true; btn.textContent = "🤖 Analyse en cours…";
   res.innerHTML = `<span style="color:#5b7387">Envoi de la photo à l'IA…</span>`;
   try{
-    const dataUrl = await fileVersDataURL(ND_PHOTOS[0]);
+    const base64 = await reduirePhoto(ND_PHOTOS[0], 1400);
     const r = await fetch(IA_TEINTE_URL, {
       method:"POST",
       headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ imageBase64: dataUrl })
+      body: JSON.stringify({ imageBase64: base64, mediaType: "image/jpeg" })
     });
-    const data = await r.json();
+    let data;
+    try{ data = await r.json(); }
+    catch(e){ res.innerHTML = `<span style="color:#B5544B">⚠️ Réponse serveur illisible (code ${r.status}).</span>`; return; }
     if(!r.ok || data.error){
-      res.innerHTML = `<span style="color:#B5544B">⚠️ Analyse indisponible${data.detail?` : ${data.detail}`:''}. Renseignez la teinte à la main.</span>`;
+      res.innerHTML = `<span style="color:#B5544B">⚠️ ${data.error||'Analyse indisponible'}${data.detail?` — ${data.detail}`:''} (code ${r.status})</span>`;
       return;
     }
     // Pré-remplissage
@@ -4850,14 +4852,16 @@ async function rcAnalyserDon(ref){
     const res = document.getElementById('rc-ia-res-'+ref);
     if(res) res.innerHTML = `<span style="color:#5b7387">Analyse de la photo…</span>`;
     try{
-      const dataUrl = await fileVersDataURL(f);
+      const base64 = await reduirePhoto(f, 1400);
       const r = await fetch(IA_TEINTE_URL, {
         method:"POST", headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify({ imageBase64: dataUrl })
+        body: JSON.stringify({ imageBase64: base64, mediaType: "image/jpeg" })
       });
-      const data = await r.json();
+      let data;
+      try{ data = await r.json(); }
+      catch(e){ if(res) res.innerHTML = `<span style="color:#B5544B">⚠️ Réponse serveur illisible (code ${r.status}).</span>`; return; }
       if(!r.ok || data.error){
-        if(res) res.innerHTML = `<span style="color:#B5544B">⚠️ Analyse indisponible${data.detail?` : ${data.detail}`:''}.</span>`;
+        if(res) res.innerHTML = `<span style="color:#B5544B">⚠️ ${data.error||'Analyse indisponible'}${data.detail?` — ${data.detail}`:''} (code ${r.status})</span>`;
         return;
       }
       // Report dans l'objet local (proposition, pas encore enregistrée)
